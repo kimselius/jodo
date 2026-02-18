@@ -30,7 +30,8 @@ type JodoConfig struct {
 	Host           string `yaml:"host"`
 	SSHUser        string `yaml:"ssh_user"`
 	SSHKeyPath     string `yaml:"ssh_key_path"`
-	Port           int    `yaml:"port"`
+	Port           int    `yaml:"port"`    // seed.py health port (9001)
+	AppPort        int    `yaml:"app_port"` // Jodo's app port (9000)
 	BrainPath      string `yaml:"brain_path"`
 	HealthEndpoint string `yaml:"health_endpoint"`
 }
@@ -156,6 +157,9 @@ func (c *Config) validate() error {
 	}
 	if c.Jodo.Port == 0 {
 		c.Jodo.Port = 9001
+	}
+	if c.Jodo.AppPort == 0 {
+		c.Jodo.AppPort = 9000
 	}
 	if c.Jodo.BrainPath == "" {
 		c.Jodo.BrainPath = "/opt/jodo/brain"

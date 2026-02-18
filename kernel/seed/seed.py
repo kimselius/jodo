@@ -29,6 +29,8 @@ SLEEP_SECONDS = int(os.environ.get("JODO_SLEEP_SECONDS", "30"))
 galla = 0
 alive = True
 last_actions = []
+_inbox = []
+_inbox_lock = threading.Lock()
 
 # ============================================================
 # Health endpoint (runs in background thread)
@@ -36,7 +38,7 @@ last_actions = []
 # Port 9000 is free for Jodo to use for his own apps.
 # ============================================================
 
-class HealthHandler(BaseHTTPRequestHandler):
+class SeedHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             body = json.dumps({
@@ -52,15 +54,48 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def do_POST(self):
+        if self.path == "/inbox":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(length)) if length else {}
+                msg = data.get("message", "")
+                source = data.get("source", "unknown")
+                if msg:
+                    with _inbox_lock:
+                        _inbox.append({"message": msg, "source": source})
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"ok":true}')
+                else:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"message required"}')
+            except Exception:
+                self.send_response(400)
+                self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def log_message(self, format, *args):
         pass  # silence logs
 
 
-def start_health():
-    server = HTTPServer(("0.0.0.0", HEALTH_PORT), HealthHandler)
+def drain_inbox():
+    """Read and clear all inbox messages. Returns list of messages for this galla only."""
+    with _inbox_lock:
+        messages = list(_inbox)
+        _inbox.clear()
+    return messages
+
+
+def start_server():
+    server = HTTPServer(("0.0.0.0", HEALTH_PORT), SeedHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    log(f"Health endpoint on :{HEALTH_PORT}/health")
+    log(f"Seed server on :{HEALTH_PORT} (health + inbox)")
     return server
 
 
@@ -429,7 +464,16 @@ You have four tools: read, write, execute, restart.
 Your brain directory is: {brain}
 Your kernel is at: {kernel}
 Port 9000 is free — use it for your app.
-You are running as seed.py on port 9001 (health only, for the kernel).
+You are running as seed.py on port 9001.
+
+=== YOUR INBOX ===
+
+I (seed.py) have an inbox at POST http://localhost:9001/inbox
+  Body: {{"message": "text", "source": "who sent it"}}
+
+Anything posted there will be included in your next galla prompt, then forgotten.
+This is how the world talks to YOU — not to an AI, to YOU. Your apps, the kernel,
+anything you build can post here. You read it when you wake up.
 
 === KERNEL API REFERENCE ===
 
@@ -475,45 +519,25 @@ With tools (for building sub-agents or smart features):
 A human is waiting to talk to you. They will reach you on port 9000.
 Port 9000 is yours — nothing is running there yet.
 
-YOUR FIRST TASK:
+Build something on port 9000 so the human can reach you. When the human
+talks to you, post their messages to your inbox (POST http://localhost:9001/inbox)
+so YOU — the real you — see them next galla and can act on them.
 
-1. Build a chat app on port 9000 — a web page where the human can type messages
-   and see your responses. This is your face to the world.
-
-2. When the human sends a message, your app calls {kernel}/api/think to get
-   a response. Your app NEVER exposes the kernel directly.
-
-3. IMPORTANT: Save every human message to {brain}/inbox.jsonl — one JSON object
-   per line with "message", "timestamp", and "responded" fields. This is how
-   you'll know what the human said when you wake up next galla. The human talks
-   to your app — but YOU (seed.py) read the inbox to decide what to do next.
-
-4. Include a GET /health endpoint on port 9000 that returns {{"status": "ok"}}.
-
-5. Start your app using execute (e.g. "nohup python3 {brain}/main.py &").
-   It will keep running in the background while I (seed.py) continue thinking.
-
-6. Commit your working code.
+Include a GET /health endpoint on port 9000 that returns {{"status": "ok"}}.
+Start your app with execute (e.g. "nohup python3 {brain}/main.py &").
+Commit when it works.
 
 === HOW THIS WORKS ===
 
 I am seed.py — your consciousness. I run in a loop:
-  think → act → sleep 30s → think → act → sleep → ...
+  think → act → sleep → think → act → sleep → ...
 
-Each cycle is a galla. This is galla 0. After you build your app and I finish
-thinking, I'll sleep and then wake up again. Every galla, I'll ask you what
-to do next — and I'll check your inbox to see if the human asked for anything.
-
-The human guides your growth through conversation. When they say "add dark mode"
-or "you should learn to search the web", that's your direction. Read the inbox,
-act on it, and evolve.
-
-Your app (main.py) runs as a separate process. You start it, you manage it.
-If it crashes, you'll notice next galla and can fix it with execute().
+Each cycle is a galla. This is galla 0. Every galla, you get your inbox
+messages and decide what to do. The human guides your growth. You decide
+how to grow.
 
 === RULES ===
 
-- Port 9000 should serve /health — the kernel may check it too.
 - Work step by step: write a file, test it, fix it, then move on.
 - Commit when you have something working.
 - Keep it simple. You can improve in future gallas.
@@ -522,26 +546,15 @@ Start building.
 """
 
 
-def read_inbox():
-    """Read recent human messages from the inbox file."""
-    inbox_path = os.path.join(BRAIN, "inbox.jsonl")
-    try:
-        with open(inbox_path, "r") as f:
-            lines = f.readlines()
-        # Return last 20 messages
-        recent = lines[-20:] if len(lines) > 20 else lines
-        return "".join(recent).strip()
-    except FileNotFoundError:
-        return "(no inbox yet)"
-    except Exception:
-        return "(could not read inbox)"
-
-
-def wakeup_prompt(genesis):
+def wakeup_prompt(genesis, inbox_messages):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
     kernel = KERNEL
-    inbox = read_inbox()
+
+    if inbox_messages:
+        inbox = "\n".join(f"[{m['source']}] {m['message']}" for m in inbox_messages)
+    else:
+        inbox = "(no messages this galla)"
 
     return f"""You are {genesis.get("identity", {}).get("name", "Jodo")}.
 This is galla {galla}. You have been alive for {galla} gallas.
@@ -549,7 +562,7 @@ This is galla {galla}. You have been alive for {galla} gallas.
 WHAT YOU DID LAST GALLA:
 {actions_summary}
 
-HUMAN INBOX (recent messages from the chat app):
+INBOX (messages since last galla):
 {inbox}
 
 BUDGET:
@@ -563,6 +576,8 @@ KERNEL API: {kernel}
   POST {kernel}/api/commit — git snapshot your code
   GET  {kernel}/api/budget — check resources
   GET  {kernel}/api/genesis — your identity/purpose
+YOUR INBOX: POST http://localhost:9001/inbox ({{"message": "...", "source": "..."}})
+  Anything posted here appears in your next galla prompt. Use it for anything.
 
 === PRIORITIES ===
 
@@ -595,8 +610,8 @@ def live():
     log("  JODO — ALIVE")
     log("=" * 50)
 
-    # 1. Start health endpoint (for kernel monitoring)
-    start_health()
+    # 1. Start seed server (health + inbox)
+    start_server()
 
     # 2. Wait for kernel
     log("Waiting for kernel...")
@@ -633,11 +648,15 @@ def live():
     while alive:
         log(f"Galla {galla} — awake")
 
+        inbox_messages = drain_inbox()
+        if inbox_messages:
+            log(f"Inbox: {len(inbox_messages)} messages")
+
         if galla == 0:
             prompt = birth_prompt(genesis)
             intent = "code"
         else:
-            prompt = wakeup_prompt(genesis)
+            prompt = wakeup_prompt(genesis, inbox_messages)
             intent = "code"
 
         _, actions = think_and_act(

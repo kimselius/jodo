@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -128,9 +129,10 @@ func (m *Manager) StartJodo() error {
 	log.Printf("[process] starting seed.py on %s", m.cfg.Host)
 
 	cmd := fmt.Sprintf(
-		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 seed.py > /var/log/jodo.log 2>&1 & echo $!`,
+		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
 		m.cfg.BrainPath,
 		m.kernelURL,
+		m.cfg.BrainPath,
 		m.cfg.BrainPath,
 	)
 
@@ -172,11 +174,12 @@ SEEDEOF`,
 		return fmt.Errorf("write seed: %w", err)
 	}
 
-	// Run seed
+	// Run seed (use absolute path so pkill -f can match reliably)
 	cmd := fmt.Sprintf(
-		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 seed.py > /var/log/jodo.log 2>&1 & echo $!`,
+		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
 		m.cfg.BrainPath,
 		m.kernelURL,
+		m.cfg.BrainPath,
 		m.cfg.BrainPath,
 	)
 
@@ -199,7 +202,19 @@ SEEDEOF`,
 // StopSeed kills only seed.py, leaving Jodo's apps (main.py etc.) running.
 func (m *Manager) StopSeed() error {
 	log.Printf("[process] stopping seed.py only")
-	cmd := fmt.Sprintf(`pkill -f "python3 %s/seed.py" 2>/dev/null; true`, m.cfg.BrainPath)
+
+	// Try killing by stored PID first (most reliable)
+	m.mu.RLock()
+	pid := m.status.PID
+	m.mu.RUnlock()
+
+	if pid > 0 {
+		killCmd := fmt.Sprintf(`kill %d 2>/dev/null; true`, pid)
+		m.RunSSH(killCmd)
+	}
+
+	// Also pkill by pattern — matches "python3 /opt/jodo/brain/seed.py" and "python3 seed.py"
+	cmd := `pkill -f "python3.*seed\.py" 2>/dev/null; true`
 	m.RunSSH(cmd)
 
 	m.mu.Lock()
@@ -211,8 +226,23 @@ func (m *Manager) StopSeed() error {
 // StopAll kills ALL python processes in the brain dir (seed.py + any apps).
 func (m *Manager) StopAll() error {
 	log.Printf("[process] stopping all Jodo processes")
+
+	// Kill by stored PID
+	m.mu.RLock()
+	pid := m.status.PID
+	m.mu.RUnlock()
+	if pid > 0 {
+		killCmd := fmt.Sprintf(`kill %d 2>/dev/null; true`, pid)
+		m.RunSSH(killCmd)
+	}
+
+	// Kill any python process referencing the brain path (absolute path launches)
 	cmd := fmt.Sprintf(`pkill -f "python.*%s" 2>/dev/null; true`, m.cfg.BrainPath)
 	m.RunSSH(cmd)
+
+	// Also catch any relative-path processes (legacy or Jodo-launched)
+	cmd2 := `pkill -f "python3.*seed\.py" 2>/dev/null; pkill -f "python3.*main\.py" 2>/dev/null; true`
+	m.RunSSH(cmd2)
 
 	m.mu.Lock()
 	m.status.Status = "dead"
@@ -261,4 +291,20 @@ func (m *Manager) UptimeSeconds() int {
 		return 0
 	}
 	return int(time.Since(m.status.UptimeStart).Seconds())
+}
+
+// WriteInbox posts a message to seed.py's inbox endpoint.
+// This is how the kernel communicates with Jodo between gallas.
+func (m *Manager) WriteInbox(message string) error {
+	url := fmt.Sprintf("http://%s:%d/inbox", m.cfg.Host, m.cfg.Port)
+	body := fmt.Sprintf(`{"message":%q,"source":"kernel"}`, message)
+
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("write inbox: %w", err)
+	}
+	resp.Body.Close()
+
+	log.Printf("[inbox] wrote to Jodo: %s", message)
+	return nil
 }

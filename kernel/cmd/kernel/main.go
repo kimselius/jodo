@@ -124,7 +124,7 @@ func main() {
 	healthChecker.Start()
 
 	// 7. Start periodic maintenance
-	go maintenanceLoop(database, gitManager, procManager, growthLogger)
+	go maintenanceLoop(cfg, database, gitManager, procManager, growthLogger)
 
 	// 8. Start HTTP server
 	addr := fmt.Sprintf(":%d", cfg.Kernel.Port)
@@ -184,16 +184,40 @@ func seedPath() string {
 	return envOr("SEED_PATH", "/app/seed/seed.py")
 }
 
-func maintenanceLoop(database *sql.DB, gitMgr *git.Manager, proc *process.Manager, growthLog *growth.Logger) {
+func maintenanceLoop(cfg *config.Config, database *sql.DB, gitMgr *git.Manager, proc *process.Manager, growthLog *growth.Logger) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
+
+	appClient := &http.Client{Timeout: 5 * time.Second}
+	var lastAppNudge time.Time
 
 	for range ticker.C {
 		// Prune old health checks
 		db.PruneOldHealthChecks(database)
 
-		// Auto-tag stable versions: if Jodo has been healthy 5+ minutes since last code change
 		status := proc.GetStatus()
+
+		// Check if Jodo's app (port 9000) is reachable
+		if status.Status == "running" && status.HealthCheckOK {
+			appURL := fmt.Sprintf("http://%s:%d/health", cfg.Jodo.Host, cfg.Jodo.AppPort)
+			resp, err := appClient.Get(appURL)
+			appOK := err == nil && resp != nil && resp.StatusCode == 200
+			if resp != nil {
+				resp.Body.Close()
+			}
+
+			if !appOK && time.Since(lastAppNudge) > 15*time.Minute {
+				msg := fmt.Sprintf("[KERNEL] Your app on port %d is not reachable. The human can't talk to you. Check if main.py is running (execute 'curl -s http://localhost:%d/health'). If it's not running, start it. If it doesn't exist, build it.",
+					cfg.Jodo.AppPort, cfg.Jodo.AppPort)
+				if err := proc.WriteInbox(msg); err != nil {
+					log.Printf("[maintenance] inbox write failed: %v", err)
+				}
+				lastAppNudge = time.Now()
+				growthLog.Log("app_down", fmt.Sprintf("App on port %d unreachable, nudged Jodo", cfg.Jodo.AppPort), "", nil)
+			}
+		}
+
+		// Auto-tag stable versions: if Jodo has been healthy 5+ minutes since last code change
 		if status.Status == "running" && status.HealthCheckOK {
 			ago, err := gitMgr.LastModifiedAgo()
 			if err == nil && ago > 5*time.Minute {
