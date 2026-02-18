@@ -215,6 +215,30 @@ jodo/
 │   └── .env.example
 ```
 
+## Upgrading
+
+After making changes, push to VPS 1 and restart:
+
+```bash
+# On VPS 1
+cd ~/jodo/kernel
+git pull
+```
+
+**If you changed Go code** (anything in `cmd/`, `internal/`):
+
+```bash
+docker compose up -d --build
+```
+
+**If you only changed `seed.py` or `configs/`** (volume-mounted — no rebuild needed):
+
+```bash
+docker compose restart kernel
+```
+
+The kernel will SSH into VPS 2, kill the old seed.py, deploy the new one, and start it. Jodo's apps (main.py etc.) keep running unless you do a nuclear restart.
+
 ## Philosophy
 
 Jodo isn't a chatbot framework or an agent library. It's an experiment in minimal viable life.
