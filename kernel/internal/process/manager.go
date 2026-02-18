@@ -196,11 +196,21 @@ SEEDEOF`,
 	return nil
 }
 
-// StopJodo kills Jodo's process on VPS 2.
-func (m *Manager) StopJodo() error {
-	log.Printf("[process] stopping Jodo")
+// StopSeed kills only seed.py, leaving Jodo's apps (main.py etc.) running.
+func (m *Manager) StopSeed() error {
+	log.Printf("[process] stopping seed.py only")
+	cmd := fmt.Sprintf(`pkill -f "python3 %s/seed.py" 2>/dev/null; true`, m.cfg.BrainPath)
+	m.RunSSH(cmd)
 
-	// Kill any python process running in brain dir
+	m.mu.Lock()
+	m.status.PID = 0
+	m.mu.Unlock()
+	return nil
+}
+
+// StopAll kills ALL python processes in the brain dir (seed.py + any apps).
+func (m *Manager) StopAll() error {
+	log.Printf("[process] stopping all Jodo processes")
 	cmd := fmt.Sprintf(`pkill -f "python.*%s" 2>/dev/null; true`, m.cfg.BrainPath)
 	m.RunSSH(cmd)
 
@@ -208,13 +218,23 @@ func (m *Manager) StopJodo() error {
 	m.status.Status = "dead"
 	m.status.PID = 0
 	m.mu.Unlock()
-
 	return nil
 }
 
-// RestartJodo stops and starts Jodo.
+// RestartJodo restarts seed.py without killing Jodo's apps.
+// seed.py will detect its apps and resume the galla loop.
 func (m *Manager) RestartJodo() error {
-	if err := m.StopJodo(); err != nil {
+	if err := m.StopSeed(); err != nil {
+		log.Printf("[process] error stopping seed: %v", err)
+	}
+	time.Sleep(1 * time.Second)
+	m.IncrementRestarts()
+	return m.StartJodo()
+}
+
+// NuclearRestart kills everything and starts fresh.
+func (m *Manager) NuclearRestart() error {
+	if err := m.StopAll(); err != nil {
 		log.Printf("[process] error stopping: %v", err)
 	}
 	time.Sleep(1 * time.Second)

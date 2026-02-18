@@ -71,7 +71,7 @@ func (r *Recovery) HandleFailure(failCount int) {
 		log.Printf("[recovery] NUCLEAR REBIRTH (fail #%d)", failCount)
 		r.manager.SetStatus("rebirthing")
 
-		if err := r.manager.StopJodo(); err != nil {
+		if err := r.manager.StopAll(); err != nil {
 			log.Printf("[recovery] stop failed: %v", err)
 		}
 

@@ -166,8 +166,11 @@ func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, gr
 		log.Printf("[boot] git init warning: %v", err)
 	}
 
-	// Always deploy and start seed.py — it IS Jodo's consciousness.
-	// seed.py detects if main.py exists and manages everything else.
+	// Stop old seed.py (if running) but leave Jodo's apps alive.
+	proc.StopSeed()
+
+	// Deploy and start fresh seed.py — it IS Jodo's consciousness.
+	// seed.py detects if main.py exists and resumes the galla loop.
 	log.Println("[boot] deploying seed.py...")
 	if err := proc.StartSeed(seedPath()); err != nil {
 		log.Printf("[boot] seed failed: %v", err)
