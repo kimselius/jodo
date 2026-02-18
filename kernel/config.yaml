@@ -1,0 +1,63 @@
+kernel:
+  port: 8080
+  health_check_interval: 10
+  max_restart_attempts: 3
+  log_level: "info"
+
+jodo:
+  host: "<VPS2_IP>"
+  ssh_user: "root"
+  ssh_key_path: "/root/.ssh/jodo_vps"
+  port: 9000
+  brain_path: "/opt/jodo/brain"
+  health_endpoint: "/health"
+
+database:
+  host: "postgres"
+  port: 5432
+  name: "jodo_kernel"
+  user: "jodo"
+  password: "${JODO_DB_PASSWORD}"
+
+providers:
+  claude:
+    api_key: "${CLAUDE_API_KEY}"
+    models:
+      claude-sonnet-4-20250514:
+        input_cost_per_1m_tokens: 3.00
+        output_cost_per_1m_tokens: 15.00
+        capabilities: [code, chat, reasoning, repair]
+        quality: 9
+    monthly_budget: 20.00
+    emergency_reserve: 2.00
+
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    models:
+      gpt-4o-mini:
+        input_cost_per_1m_tokens: 0.15
+        output_cost_per_1m_tokens: 0.60
+        capabilities: [code, chat]
+        quality: 6
+    monthly_budget: 10.00
+    emergency_reserve: 1.00
+
+  ollama:
+    base_url: "http://localhost:11434"
+    models:
+      llama3:
+        input_cost_per_1m_tokens: 0
+        output_cost_per_1m_tokens: 0
+        capabilities: [code, chat, quick]
+        quality: 5
+    monthly_budget: 0
+    emergency_reserve: 0
+
+routing:
+  strategy: "best_affordable"
+  intent_preferences:
+    code:   [claude, openai, ollama]
+    chat:   [openai, ollama, claude]
+    embed:  [ollama, openai]
+    quick:  [ollama, openai]
+    repair: [claude, openai]
