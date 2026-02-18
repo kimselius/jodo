@@ -155,7 +155,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("jodo.host must be set to Jodo's IP address (set JODO_IP env var)")
 	}
 	if c.Jodo.Port == 0 {
-		c.Jodo.Port = 9000
+		c.Jodo.Port = 9001
 	}
 	if c.Jodo.BrainPath == "" {
 		c.Jodo.BrainPath = "/opt/jodo/brain"

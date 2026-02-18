@@ -161,31 +161,20 @@ func main() {
 func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, growthLog *growth.Logger) {
 	log.Println("[boot] connecting to VPS 2...")
 
-	// Initialize git repo
+	// Initialize git repo on VPS 2
 	if err := gitMgr.Init(); err != nil {
 		log.Printf("[boot] git init warning: %v", err)
 	}
 
-	// Check if brain/main.py exists
-	hasMain, err := gitMgr.HasBrainMain()
-	if err != nil {
-		log.Printf("[boot] cannot check VPS 2: %v", err)
+	// Always deploy and start seed.py — it IS Jodo's consciousness.
+	// seed.py detects if main.py exists and manages everything else.
+	log.Println("[boot] deploying seed.py...")
+	if err := proc.StartSeed(seedPath()); err != nil {
+		log.Printf("[boot] seed failed: %v", err)
 		proc.SetStatus("dead")
 		return
 	}
-
-	if hasMain {
-		log.Println("[boot] brain/main.py found, starting Jodo")
-		if err := proc.StartJodo(); err != nil {
-			log.Printf("[boot] start failed: %v", err)
-		}
-	} else {
-		log.Println("[boot] no brain/main.py — deploying seed for first boot")
-		if err := proc.StartSeed(seedPath()); err != nil {
-			log.Printf("[boot] seed failed: %v", err)
-		}
-		growthLog.Log("first_boot", "Deploying seed.py for the first time", "", nil)
-	}
+	growthLog.Log("boot", "seed.py deployed and started", "", nil)
 }
 
 func seedPath() string {

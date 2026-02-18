@@ -121,22 +121,17 @@ func (m *Manager) sshConnect() (*ssh.Client, error) {
 	return client, nil
 }
 
-// StartJodo launches Jodo on VPS 2.
-// Checks if brain/main.py exists (Jodo has evolved) — if not, falls back to seed.py.
+// StartJodo launches seed.py on VPS 2.
+// seed.py is Jodo's consciousness — it always runs. Jodo manages his own apps.
 func (m *Manager) StartJodo() error {
 	m.SetStatus("starting")
-	log.Printf("[process] starting Jodo on %s", m.cfg.Host)
-
-	// Determine which script to run
-	script := m.detectScript()
-	log.Printf("[process] using script: %s", script)
+	log.Printf("[process] starting seed.py on %s", m.cfg.Host)
 
 	cmd := fmt.Sprintf(
-		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 %s > /var/log/jodo.log 2>&1 & echo $!`,
+		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 seed.py > /var/log/jodo.log 2>&1 & echo $!`,
 		m.cfg.BrainPath,
 		m.kernelURL,
 		m.cfg.BrainPath,
-		script,
 	)
 
 	output, err := m.RunSSH(cmd)
@@ -151,23 +146,8 @@ func (m *Manager) StartJodo() error {
 	m.status.UptimeStart = time.Now()
 	m.mu.Unlock()
 
-	log.Printf("[process] Jodo started with PID %d (script: %s)", pid, script)
+	log.Printf("[process] seed.py started with PID %d", pid)
 	return nil
-}
-
-// detectScript checks which script exists on VPS 2.
-// Prefers main.py (evolved Jodo) over seed.py (bootstrap).
-func (m *Manager) detectScript() string {
-	checkCmd := fmt.Sprintf(`test -f %s/main.py && echo "main.py" || echo "seed.py"`, m.cfg.BrainPath)
-	output, err := m.RunSSH(checkCmd)
-	if err != nil {
-		return "seed.py"
-	}
-	script := strings.TrimSpace(output)
-	if script == "main.py" || script == "seed.py" {
-		return script
-	}
-	return "seed.py"
 }
 
 // StartSeed launches the seed script for first boot / rebirth.

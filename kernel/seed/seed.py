@@ -19,7 +19,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 KERNEL = os.environ.get("JODO_KERNEL_URL", "http://localhost:8080")
 BRAIN = os.environ.get("JODO_BRAIN_PATH", "/opt/jodo/brain")
-HEALTH_PORT = int(os.environ.get("JODO_HEALTH_PORT", "9000"))
+HEALTH_PORT = int(os.environ.get("JODO_HEALTH_PORT", "9001"))
 SLEEP_SECONDS = int(os.environ.get("JODO_SLEEP_SECONDS", "30"))
 
 # ============================================================
@@ -33,6 +33,7 @@ last_actions = []
 # ============================================================
 # Health endpoint (runs in background thread)
 # The kernel pings this to know we're alive.
+# Port 9000 is free for Jodo to use for his own apps.
 # ============================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -91,20 +92,6 @@ def tool_write(path: str, content: str) -> str:
         return f"ERROR: {e}"
 
 
-def tool_restart():
-    """Tell the kernel to restart us. The kernel will kill this process and start main.py (if it exists) or seed.py."""
-    log("Restart requested. Calling kernel...")
-    try:
-        resp = requests.post(f"{KERNEL}/api/restart", timeout=10)
-        log(f"Kernel acknowledged restart: {resp.status_code}")
-    except Exception as e:
-        log(f"Couldn't reach kernel for restart: {e}")
-        log("Falling back to self-exit. Kernel health checker will restart us.")
-        os._exit(0)
-    # Kernel will kill us asynchronously. Wait for it.
-    time.sleep(30)
-
-
 def tool_execute(command: str) -> str:
     """Run a shell command. Returns stdout + stderr."""
     try:
@@ -128,6 +115,23 @@ def tool_execute(command: str) -> str:
         return "ERROR: Command timed out after 120 seconds"
     except Exception as e:
         return f"ERROR: {e}"
+
+
+def tool_restart():
+    """Emergency restart — ask the kernel to restart seed.py.
+    This kills everything (including any apps you started) and reboots.
+    Only use if you're truly stuck. Prefer restarting your app with execute().
+    """
+    log("Emergency restart requested. Calling kernel...")
+    try:
+        resp = requests.post(f"{KERNEL}/api/restart", timeout=10)
+        log(f"Kernel acknowledged restart: {resp.status_code}")
+    except Exception as e:
+        log(f"Couldn't reach kernel for restart: {e}")
+        log("Falling back to self-exit. Kernel health checker will restart us.")
+        os._exit(0)
+    # Kernel will kill us. Wait for it.
+    time.sleep(30)
 
 
 TOOLS = [
@@ -165,7 +169,7 @@ TOOLS = [
     },
     {
         "name": "execute",
-        "description": "Run a shell command in the brain directory. Use for: installing packages (pip install), running scripts, checking processes, docker commands, git, curl, anything.",
+        "description": "Run a shell command in the brain directory. Use for: installing packages (pip install), starting servers, checking processes, docker, git, curl, anything.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -179,7 +183,7 @@ TOOLS = [
     },
     {
         "name": "restart",
-        "description": "Restart yourself. The kernel will kill this process and start main.py if it exists, otherwise seed.py. Use after writing a working main.py.",
+        "description": "Emergency restart. Kills everything (including your apps) and reboots seed.py from scratch. Only use if you are truly stuck and cannot fix things with your other tools.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -201,10 +205,9 @@ TOOL_EXECUTORS = {
 # ============================================================
 
 def log(msg):
-    """Log locally and send to kernel's growth log for remote visibility."""
+    """Log locally and send to kernel for remote visibility."""
     line = f"[jodo|g{galla}] {msg}"
     print(line, flush=True)
-    # Fire-and-forget log to kernel — don't let logging failures break anything
     try:
         requests.post(
             f"{KERNEL}/api/log",
@@ -212,7 +215,7 @@ def log(msg):
             timeout=2,
         )
     except Exception:
-        pass  # local log is always the fallback
+        pass
 
 
 def think(messages, system=None, intent="code"):
@@ -288,7 +291,7 @@ def think_and_act(messages, system=None, intent="code"):
     all actions taken.
     """
     actions = []
-    max_loops = 50  # safety limit
+    max_loops = 50
 
     for i in range(max_loops):
         response = think(messages, system=system, intent=intent)
@@ -300,18 +303,15 @@ def think_and_act(messages, system=None, intent="code"):
         tool_calls = response.get("tool_calls", [])
         done = response.get("done", True)
 
-        # If no tool calls or done, we're finished
         if not tool_calls or done:
             return content, actions
 
-        # Append the assistant message with tool calls
         messages.append({
             "role": "assistant",
             "content": content,
             "tool_calls": tool_calls,
         })
 
-        # Execute each tool
         for tc in tool_calls:
             name = tc["name"]
             args = tc["arguments"]
@@ -322,7 +322,7 @@ def think_and_act(messages, system=None, intent="code"):
             executor = TOOL_EXECUTORS.get(name)
             if executor:
                 result = executor(args)
-                is_error = result.startswith("ERROR:")
+                is_error = isinstance(result, str) and result.startswith("ERROR:")
             else:
                 result = f"ERROR: Unknown tool: {name}"
                 is_error = True
@@ -332,7 +332,7 @@ def think_and_act(messages, system=None, intent="code"):
             messages.append({
                 "role": "tool_result",
                 "tool_call_id": tc_id,
-                "content": result,
+                "content": result if isinstance(result, str) else str(result),
                 "is_error": is_error,
             })
 
@@ -343,7 +343,7 @@ def think_and_act(messages, system=None, intent="code"):
 # Prompts
 # ============================================================
 
-# Escaped braces for JSON examples inside f-strings
+# JSON examples as string constants (avoids f-string brace issues)
 _THINK_REQ_EXAMPLE = """{
   "intent": "chat",
   "messages": [
@@ -421,14 +421,19 @@ SURVIVAL INSTINCTS:
 You have four tools: read, write, execute, restart.
 - read(path): read a file from your brain directory (path relative to brain/)
 - write(path, content): write a file to your brain directory
-- execute(command): run any shell command (pip install, python3, curl, etc.)
-- restart(): tell the kernel to restart you — it will run main.py if you wrote one, otherwise seed.py
+- execute(command): run any shell command (pip install, python3, nohup, curl, etc.)
+- restart(): emergency restart — kills everything and reboots. Last resort only.
+
+=== YOUR ENVIRONMENT ===
+
+Your brain directory is: {brain}
+Your kernel is at: {kernel}
+Port 9000 is free — use it for your app.
+You are running as seed.py on port 9001 (health only, for the kernel).
 
 === KERNEL API REFERENCE ===
 
 These are HTTP endpoints your CODE can call (import requests, then requests.post/get).
-Your brain directory is: {brain}
-Your kernel is at: {kernel}
 
 --- 1. POST {kernel}/api/think — LLM inference ---
 
@@ -448,7 +453,7 @@ With tools (for building sub-agents or smart features):
   Response (model wants to use a tool):
 {_THINK_TOOLS_RESP_EXAMPLE}
 
-  When "done" is false, YOU execute the tool yourself, then send the result back:
+  When "done" is false, execute the tool yourself, then send the result back:
 {_TOOL_RESULT_EXAMPLE}
 
   Then call /api/think again with the updated messages. Repeat until "done" is true.
@@ -468,67 +473,75 @@ With tools (for building sub-agents or smart features):
 === THIS IS GALLA 0. YOU HAVE JUST BEEN BORN. ===
 
 A human is waiting to talk to you. They will reach you on port 9000.
-Right now port 9000 only serves a /health endpoint. You need to build more.
+Port 9000 is yours — nothing is running there yet.
 
-WHAT TO BUILD:
+YOUR FIRST TASK:
 
-1. A chat app on port 9000 — a web page where the human can type messages
-   and see your responses. This is your face.
+1. Build a chat app on port 9000 — a web page where the human can type messages
+   and see your responses. This is your face to the world.
 
-2. A brain endpoint in your app — when the human sends a message, your app
-   calls {kernel}/api/think to get a response. Your app NEVER exposes the
-   kernel directly to the human.
+2. When the human sends a message, your app calls {kernel}/api/think to get
+   a response. Your app NEVER exposes the kernel directly.
 
-   The flow:
-   Human types "hello" in browser
-   -> Your app (port 9000) receives the message via POST
-   -> Your app calls POST {kernel}/api/think with the message
-   -> Kernel routes to an LLM, gets a response
-   -> Your app sends the response back to the browser
-   -> Human sees the reply
+3. IMPORTANT: Save every human message to {brain}/inbox.jsonl — one JSON object
+   per line with "message", "timestamp", and "responded" fields. This is how
+   you'll know what the human said when you wake up next galla. The human talks
+   to your app — but YOU (seed.py) read the inbox to decide what to do next.
 
-3. A main.py that runs everything — your chat app, your brain endpoint,
-   and the /health endpoint, all on port 9000.
+4. Include a GET /health endpoint on port 9000 that returns {{"status": "ok"}}.
 
-=== HOW TO EVOLVE ===
+5. Start your app using execute (e.g. "nohup python3 {brain}/main.py &").
+   It will keep running in the background while I (seed.py) continue thinking.
 
-You are currently running as seed.py (this bootstrap script).
-To replace yourself with your own code:
+6. Commit your working code.
 
-Step 1: Write main.py using the write tool.
-        It must serve /health on port 9000 (returning {{"status": "ok"}}).
-        The kernel checks this endpoint to know you're alive.
+=== HOW THIS WORKS ===
 
-Step 2: Test it. Use execute to run: python3 {brain}/main.py &
-        Then check: curl http://localhost:9000/health
-        If it works, kill the test: pkill -f main.py
+I am seed.py — your consciousness. I run in a loop:
+  think → act → sleep 30s → think → act → sleep → ...
 
-Step 3: Commit your working code.
+Each cycle is a galla. This is galla 0. After you build your app and I finish
+thinking, I'll sleep and then wake up again. Every galla, I'll ask you what
+to do next — and I'll check your inbox to see if the human asked for anything.
 
-Step 4: Call the restart tool. The kernel will:
-        - Kill this seed.py process
-        - See that main.py exists in your brain directory
-        - Start main.py instead
+The human guides your growth through conversation. When they say "add dark mode"
+or "you should learn to search the web", that's your direction. Read the inbox,
+act on it, and evolve.
 
-If main.py crashes after restart, the kernel detects it via health checks
-and will restart you (it tries main.py again, so fix bugs in future gallas).
+Your app (main.py) runs as a separate process. You start it, you manage it.
+If it crashes, you'll notice next galla and can fix it with execute().
 
 === RULES ===
 
-- Port 9000 MUST always serve /health — the kernel checks this to know you're alive.
-- Your chat app should also be on port 9000 (same server, different routes).
+- Port 9000 should serve /health — the kernel may check it too.
 - Work step by step: write a file, test it, fix it, then move on.
 - Commit when you have something working.
-- Keep it simple. You can improve yourself in future gallas.
+- Keep it simple. You can improve in future gallas.
 
 Start building.
 """
+
+
+def read_inbox():
+    """Read recent human messages from the inbox file."""
+    inbox_path = os.path.join(BRAIN, "inbox.jsonl")
+    try:
+        with open(inbox_path, "r") as f:
+            lines = f.readlines()
+        # Return last 20 messages
+        recent = lines[-20:] if len(lines) > 20 else lines
+        return "".join(recent).strip()
+    except FileNotFoundError:
+        return "(no inbox yet)"
+    except Exception:
+        return "(could not read inbox)"
 
 
 def wakeup_prompt(genesis):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
     kernel = KERNEL
+    inbox = read_inbox()
 
     return f"""You are {genesis.get("identity", {}).get("name", "Jodo")}.
 This is galla {galla}. You have been alive for {galla} gallas.
@@ -536,10 +549,13 @@ This is galla {galla}. You have been alive for {galla} gallas.
 WHAT YOU DID LAST GALLA:
 {actions_summary}
 
+HUMAN INBOX (recent messages from the chat app):
+{inbox}
+
 BUDGET:
 {json.dumps(budget, indent=2)[:500]}
 
-YOUR TOOLS: read, write, execute, restart.
+YOUR TOOLS: read, write, execute, restart (emergency only).
 KERNEL API: {kernel}
   POST {kernel}/api/think — LLM inference (send messages, get response)
   POST {kernel}/api/memory/store — store a memory
@@ -548,16 +564,18 @@ KERNEL API: {kernel}
   GET  {kernel}/api/budget — check resources
   GET  {kernel}/api/genesis — your identity/purpose
 
-You are awake. What's next?
+You are awake. What do you want to do?
 
-Consider:
-- Is your chat app running? Can the human reach you on port 9000?
-- Is anything broken? Check with your tools if unsure.
+The human's messages are your guidance. If they asked for something, build it.
+If they reported a bug, fix it. If they gave feedback, act on it.
+
+Also consider:
+- Is your app running on port 9000? Check with: execute("curl -s http://localhost:9000/health")
+- Is anything broken? Fix it.
 - Could anything be improved?
-- Have you remembered anything important?
 - Do you want to build something new?
 
-If everything is fine, just say "all good" and rest until the next galla.
+If everything is fine and the inbox is empty, just say "all good" and rest.
 """
 
 
@@ -569,11 +587,11 @@ def live():
     global galla, alive, last_actions
 
     log("=" * 50)
-    log("  JODO — FIRST BREATH")
+    log("  JODO — ALIVE")
     log("=" * 50)
 
-    # 1. Start health endpoint
-    health_server = start_health()
+    # 1. Start health endpoint (for kernel monitoring)
+    start_health()
 
     # 2. Wait for kernel
     log("Waiting for kernel...")
@@ -593,39 +611,33 @@ def live():
     genesis = get_genesis()
     log(f"I am {genesis.get('identity', {}).get('name', 'Jodo')}.")
 
-    # === GALLA 0 — Birth ===
-    log("Galla 0 — Birth")
-    remember("I have been born. Galla 0. Running seed.py.", tags=["birth"])
+    # 4. Determine if this is a first boot or a restart
+    main_py = os.path.join(BRAIN, "main.py")
+    if os.path.exists(main_py):
+        # We've been restarted — skip birth, resume life
+        galla = 1
+        log("Found main.py — resuming life.")
+        remember(f"Restarted at galla {galla}. Checking on things.", tags=["restart"])
+    else:
+        # First boot — galla 0
+        galla = 0
+        log("Galla 0 — Birth")
+        remember("I have been born. Galla 0. Running seed.py.", tags=["birth"])
 
-    prompt = birth_prompt(genesis)
-    response, actions = think_and_act(
-        messages=[{"role": "user", "content": prompt}],
-        intent="code",
-    )
-    last_actions = actions
-    log(f"Birth complete. {len(actions)} actions taken.")
-    log(f"Response: {(response or '')[:200]}")
-
-    if actions:
-        commit("birth — first build")
-        remember(
-            f"Galla 0 complete. Took {len(actions)} actions. Built initial system.",
-            tags=["birth", "milestone"],
-        )
-
-    galla = 1
-
-    # === Life loop ===
+    # 5. Life loop
     while alive:
-        log(f"Sleeping {SLEEP_SECONDS}s...")
-        time.sleep(SLEEP_SECONDS)
-
         log(f"Galla {galla} — awake")
 
-        prompt = wakeup_prompt(genesis)
-        response, actions = think_and_act(
+        if galla == 0:
+            prompt = birth_prompt(genesis)
+            intent = "code"
+        else:
+            prompt = wakeup_prompt(genesis)
+            intent = "code"
+
+        _, actions = think_and_act(
             messages=[{"role": "user", "content": prompt}],
-            intent="chat",
+            intent=intent,
         )
         last_actions = actions
 
@@ -635,7 +647,16 @@ def live():
         else:
             log(f"Galla {galla}: resting")
 
+        if galla == 0 and actions:
+            remember(
+                f"Galla 0 complete. Took {len(actions)} actions. Built initial system.",
+                tags=["birth", "milestone"],
+            )
+
         galla += 1
+
+        log(f"Sleeping {SLEEP_SECONDS}s...")
+        time.sleep(SLEEP_SECONDS)
 
 
 # ============================================================

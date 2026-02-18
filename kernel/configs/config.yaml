@@ -10,7 +10,7 @@ jodo:
   host: "${JODO_IP}"
   ssh_user: "${SSH_USER}"
   ssh_key_path: "/root/.ssh/jodo_vps"
-  port: 9000
+  port: 9001
   brain_path: "/opt/jodo/brain"
   health_endpoint: "/health"
 

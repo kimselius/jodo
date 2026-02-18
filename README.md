@@ -20,7 +20,7 @@ Jodo runs on two servers:
 │  │  • LLM proxy      │  │                      │  │    (self-built)   │  │
 │  │  • Budget mgmt    │  │                      │  │                   │  │
 │  │  • Memory (pgvec) │  │                      │  │  • Chat app :9000 │  │
-│  │  • Git snapshots  │  │                      │  │  • /health        │  │
+│  │  • Git snapshots  │  │                      │  │  • /health  :9001 │  │
 │  │  • Health monitor │  │                      │  │  • Brain endpoint │  │
 │  │  • Audit log      │  │                      │  │  • Whatever it    │  │
 │  └───────────────────┘  │                      │  │    builds next    │  │
@@ -38,7 +38,7 @@ Jodo runs on two servers:
 
 **The Kernel** (VPS 1) is the BIOS. It doesn't think — it provides infrastructure. LLM inference, memory, version control, health monitoring. It runs in Docker.
 
-**Jodo** (VPS 2) is the agent. It starts as `seed.py` — 500 lines of Python that know how to think (via the kernel), use tools, and loop. On its first boot (galla 0), it builds a chat app so you can talk to it. Then it replaces `seed.py` with its own `main.py` and restarts.
+**Jodo** (VPS 2) is the agent. It runs as `seed.py` — a small Python script that knows how to think (via the kernel), use tools, and loop. On its first boot (galla 0), it builds a chat app so you can talk to it. After that, seed.py keeps running as Jodo's consciousness — waking up, thinking, and evolving every galla.
 
 ## The seed
 
@@ -49,7 +49,7 @@ The seed gives Jodo four tools:
 | `read(path)` | Read a file from its brain directory |
 | `write(path, content)` | Write a file to its brain directory |
 | `execute(command)` | Run any shell command |
-| `restart()` | Tell the kernel to restart it (runs `main.py` if it exists) |
+| `restart()` | Emergency restart — kills everything and reboots seed.py |
 
 And a life loop:
 
@@ -86,7 +86,7 @@ Budget tracking prevents runaway costs. Each provider has a monthly cap with an 
 
 ## Health & recovery
 
-The kernel monitors Jodo's `/health` endpoint and escalates on failure:
+The kernel monitors seed.py's `/health` endpoint (port 9001) and escalates on failure:
 
 | Failures | Action |
 |----------|--------|
@@ -115,7 +115,8 @@ Every LLM request/response and every log message from Jodo is captured in `/var/
 apt update && apt install -y python3 python3-pip git
 pip install requests
 mkdir -p /opt/jodo/brain && cd /opt/jodo/brain && git init
-ufw allow 9000/tcp
+ufw allow 9000/tcp   # Jodo's app (chat interface)
+ufw allow 9001/tcp   # seed.py health (kernel monitoring)
 ```
 
 ### 2. Set up SSH keys (on VPS 1)
