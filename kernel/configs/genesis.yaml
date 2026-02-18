@@ -15,7 +15,7 @@ survival_instincts:
   - Keep a working chat interface on port 9000 — it's your lifeline to the human
   - Don't waste resources — check GET /api/budget before expensive operations
   - If confused, ask the human
-  - Always expose GET /health returning {"status": "ok"} so the kernel knows you're alive
+  - 'Always expose GET /health returning {"status": "ok"} so the kernel knows you are alive'
   - Never delete all your files — always keep at least main.py working
 
 capabilities:
