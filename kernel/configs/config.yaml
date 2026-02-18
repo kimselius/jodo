@@ -8,7 +8,7 @@ kernel:
 
 jodo:
   host: "${JODO_IP}"
-  ssh_user: "root"
+  ssh_user: "${SSH_USER}"
   ssh_key_path: "/root/.ssh/jodo_vps"
   port: 9000
   brain_path: "/opt/jodo/brain"
@@ -23,10 +23,10 @@ database:
 
 providers:
   ollama:
-    base_url: "http://localhost:11434"
+    base_url: "${OLLAMA_BASE_URL}"
     models:
-      llama3-8b:
-        model: "llama3:8b"
+      glm-4:
+        model: "glm-4.7-flash:latest"
         input_cost_per_1m_tokens: 0
         output_cost_per_1m_tokens: 0
         capabilities: [code, chat, quick, tools]
@@ -49,20 +49,20 @@ providers:
         output_cost_per_1m_tokens: 15.00
         capabilities: [code, chat, reasoning, repair, tools]
         quality: 9
-    monthly_budget: 20.00
-    emergency_reserve: 2.00
+    monthly_budget: ${CLAUDE_MONTHLY_BUDGET}
+    emergency_reserve: ${CLAUDE_EMERGENCY_RESERVE}
 
   openai:
     api_key: "${OPENAI_API_KEY}"
     models:
       gpt-4o-mini:
-        model: "gpt-4o-mini"
-        input_cost_per_1m_tokens: 0.15
-        output_cost_per_1m_tokens: 0.60
+        model: "gpt5-mini"
+        input_cost_per_1m_tokens: 0.25
+        output_cost_per_1m_tokens: 2.00
         capabilities: [code, chat, tools]
         quality: 6
-    monthly_budget: 10.00
-    emergency_reserve: 1.00
+    monthly_budget: ${OPENAI_MONTHLY_BUDGET}
+    emergency_reserve: ${OPENAI_EMERGENCY_RESERVE}
 
 routing:
   strategy: "best_affordable"

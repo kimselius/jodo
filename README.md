@@ -106,34 +106,60 @@ Every LLM request/response and every log message from Jodo is captured in `/var/
 ### Prerequisites
 
 - Two servers (any cheap VPS works)
-- Docker & Docker Compose on both
-- SSH key access from VPS 1 to VPS 2
+- **VPS 1** (Kernel): Docker & Docker Compose
+- **VPS 2** (Jodo): Python 3, pip, git
 
-### VPS 2 (Jodo's brain)
+### 1. Prepare VPS 2 (Jodo's brain)
 
 ```bash
-# Just needs Docker, Python, git, and an open port
 apt update && apt install -y python3 python3-pip git
-pip install requests fastapi uvicorn jinja2
+pip install requests
 mkdir -p /opt/jodo/brain && cd /opt/jodo/brain && git init
 ufw allow 9000/tcp
 ```
 
-### VPS 1 (Kernel)
+### 2. Set up SSH keys (on VPS 1)
+
+The kernel SSHes into VPS 2 to deploy and manage Jodo.
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/jodo_vps -N ""
+ssh-copy-id -i ~/.ssh/jodo_vps.pub root@<VPS2_IP>
+```
+
+### 3. Configure and launch (on VPS 1)
+
+`.env` is the only file you need to edit. Everything else is a template.
 
 ```bash
 cd kernel/
-
-# Configure
 cp .env.example .env
-# Edit .env:
-#   KERNEL_URL=http://<VPS1_IP>:8080
-#   JODO_IP=<VPS2_IP>
-#   JODO_DB_PASSWORD=<strong-password>
-#   CLAUDE_API_KEY=sk-ant-...    (optional)
-#   OPENAI_API_KEY=sk-...        (optional)
+```
 
-# Launch
+Edit `.env`:
+
+```bash
+# Required
+KERNEL_URL=http://<VPS1_IP>:8080    # how Jodo reaches this kernel
+JODO_IP=<VPS2_IP>                    # Jodo's server
+JODO_DB_PASSWORD=<strong-password>
+
+# SSH (defaults shown — only change if needed)
+SSH_KEY_PATH=~/.ssh/jodo_vps
+SSH_USER=root
+
+# LLM API keys (optional — Ollama is free and preferred)
+CLAUDE_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+
+# Budgets (USD per month, defaults shown)
+CLAUDE_MONTHLY_BUDGET=20.00
+OPENAI_MONTHLY_BUDGET=10.00
+```
+
+Launch:
+
+```bash
 docker compose up -d
 ```
 
@@ -143,7 +169,7 @@ The kernel will:
 3. SSH into VPS 2 and deploy `seed.py`
 4. Seed wakes up, calls `/api/think`, and starts building
 
-### Watch it come alive
+### 4. Watch it come alive
 
 ```bash
 # Kernel logs
@@ -151,9 +177,6 @@ docker compose logs -f kernel
 
 # Audit trail (every prompt and response)
 tail -f /var/log/jodo-audit.jsonl | jq .
-
-# Jodo's local logs (on VPS 2)
-tail -f /var/log/jodo.log
 ```
 
 Once galla 0 completes, Jodo should have a chat interface at `http://<VPS2_IP>:9000`.

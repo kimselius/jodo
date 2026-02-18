@@ -4,13 +4,22 @@ services:
     ports:
       - "8080:8080"
     environment:
+      - KERNEL_URL=${KERNEL_URL}
+      - JODO_IP=${JODO_IP}
+      - SSH_USER=${SSH_USER:-root}
+      - JODO_DB_PASSWORD=${JODO_DB_PASSWORD}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - JODO_DB_PASSWORD=${JODO_DB_PASSWORD}
+      - CLAUDE_MONTHLY_BUDGET=${CLAUDE_MONTHLY_BUDGET:-20.00}
+      - CLAUDE_EMERGENCY_RESERVE=${CLAUDE_EMERGENCY_RESERVE:-2.00}
+      - OPENAI_MONTHLY_BUDGET=${OPENAI_MONTHLY_BUDGET:-10.00}
+      - OPENAI_EMERGENCY_RESERVE=${OPENAI_EMERGENCY_RESERVE:-1.00}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
     volumes:
       - ./configs:/app/configs
       - ./seed:/app/seed
-      - ~/.ssh/jodo_vps:/root/.ssh/jodo_vps:ro
+      - ${SSH_KEY_PATH:-~/.ssh/jodo_vps}:/root/.ssh/jodo_vps:ro
+      - /var/log:/var/log
     depends_on:
       - postgres
 
