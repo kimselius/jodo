@@ -1,4 +1,4 @@
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { api } from '@/lib/api'
 import type { ProviderSetup, GenesisSetup, ProvisionStep } from '@/types/setup'
 
@@ -107,7 +107,7 @@ Your goal is to be genuinely useful to them.`,
 
 export type SetupStep = 'vps' | 'server-setup' | 'kernel-url' | 'providers' | 'genesis' | 'review'
 
-const STEPS: SetupStep[] = ['vps', 'server-setup', 'kernel-url', 'providers', 'genesis', 'review']
+const ALL_STEPS: SetupStep[] = ['vps', 'server-setup', 'kernel-url', 'providers', 'genesis', 'review']
 
 export function useSetup() {
   const currentStep = ref<SetupStep>('vps')
@@ -117,6 +117,13 @@ export function useSetup() {
 
   // Jodo mode (vps or docker)
   const jodoMode = ref<'vps' | 'docker'>('vps')
+
+  // Active steps — Docker mode skips kernel-url (auto-set to http://kernel:8080)
+  const activeSteps = computed(() =>
+    jodoMode.value === 'docker'
+      ? ALL_STEPS.filter(s => s !== 'kernel-url')
+      : ALL_STEPS
+  )
 
   // VPS step
   const vps = reactive({
@@ -144,20 +151,20 @@ export function useSetup() {
   const genesis = ref<GenesisSetup>(JSON.parse(JSON.stringify(DEFAULT_GENESIS)))
 
   function currentStepIndex() {
-    return STEPS.indexOf(currentStep.value)
+    return activeSteps.value.indexOf(currentStep.value)
   }
 
   function nextStep() {
     const idx = currentStepIndex()
-    if (idx < STEPS.length - 1) {
-      currentStep.value = STEPS[idx + 1]
+    if (idx < activeSteps.value.length - 1) {
+      currentStep.value = activeSteps.value[idx + 1]
     }
   }
 
   function prevStep() {
     const idx = currentStepIndex()
     if (idx > 0) {
-      currentStep.value = STEPS[idx - 1]
+      currentStep.value = activeSteps.value[idx - 1]
     }
   }
 
@@ -168,6 +175,8 @@ export function useSetup() {
       if (jodoMode.value === 'docker') {
         vps.host = 'jodo'
         vps.sshUser = 'root'
+        // Docker mode: Jodo reaches kernel via Docker network, not external IP
+        kernelUrl.value = 'http://kernel:8080'
       }
     } catch {
       // Default to vps mode
@@ -281,7 +290,7 @@ export function useSetup() {
 
   return {
     currentStep,
-    steps: STEPS,
+    steps: activeSteps,
     loading,
     error,
     birthing,

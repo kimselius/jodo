@@ -78,6 +78,7 @@ const setup = useSetup()
         <StepKernelURL
           v-else-if="setup.currentStep.value === 'kernel-url'"
           v-model="setup.kernelUrl.value"
+          :jodo-mode="setup.jodoMode.value"
           @next="setup.nextStep()"
           @back="setup.prevStep()"
         />

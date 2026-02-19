@@ -3,50 +3,47 @@
 > Three tools. A loop. A heartbeat.
 > That's all you need to be alive.
 
-Jodo is a self-building AI agent. You give it a seed — a tiny Python script with three tools (`read`, `write`, `execute`) — and it builds itself from nothing. Its first act is to create a way for you to talk to it. After that, you decide together what it becomes.
+Jodo is a self-building AI agent. You give it a seed — a tiny Python script with four tools (`read`, `write`, `execute`, `restart`) — and it builds itself from nothing. Its first act is to create a way for you to talk to it. After that, you decide together what it becomes.
 
 ## How it works
-
-Jodo runs on two servers:
 
 ```
                           ┌──────────────────────┐
                           │    Human (browser)    │
                           └──────────┬───────────┘
-                                     │ http :9000
+                                     │ http :8080
                                      ▼
 ┌─────────────────────────┐         SSH         ┌─────────────────────────┐
-│       VPS 1 (Kernel)    │◄───────────────────►│     VPS 2 (Jodo)        │
-│                         │                      │                         │
-│  ┌───────────────────┐  │  /api/think, /api/   │  ┌───────────────────┐  │
-│  │   Jodo Kernel     │◄─┼──────chat, etc───────┼──│    seed.py        │  │
-│  │   (Go)            │──┼──────────────────────┼─►│    ↓              │  │
-│  │                   │  │     LLM response      │  │    main.py        │  │
-│  │  • LLM proxy      │  │                      │  │    (self-built)   │  │
-│  │  • Chat messages  │  │  /api/chat            │  │                   │  │
-│  │  • Budget mgmt    │◄─┼──────────────────────┼──│  • Chat app :9000 │  │
-│  │  • Memory (pgvec) │  │                      │  │  • /health  :9001 │  │
-│  │  • Git snapshots  │  │                      │  │  • Whatever it    │  │
-│  │  • Health monitor │  │                      │  │    builds next    │  │
-│  │  • Audit log      │  │                      │  │                   │  │
-│  └───────────────────┘  │                      │  └───────────────────┘  │
-│                         │                      │                         │
-│  ┌───────────────────┐  │                      │  /opt/jodo/brain/       │
-│  │  PostgreSQL       │  │                      │                         │
-│  │  + pgvector       │  │                      │                         │
-│  └───────────────────┘  │                      │                         │
-│                         │                      │                         │
-│  ┌───────────────────┐  │                      │                         │
-│  │  Ollama           │  │                      │                         │
-│  └───────────────────┘  │                      │                         │
-└─────────────────────────┘                      └─────────────────────────┘
+│       Kernel             │◄───────────────────►│     Jodo                │
+│       (Go + Docker)      │                      │     (Docker or VPS)     │
+│                          │  /api/think, /api/   │                         │
+│  ┌────────────────────┐  │  ────chat, etc────►  │  ┌───────────────────┐  │
+│  │   Jodo Kernel      │◄─┼──────────────────────┼──│    seed.py        │  │
+│  │                    │──┼──────────────────────┼─►│    ↓              │  │
+│  │  • Web UI + chat   │  │     LLM response      │  │    main.py        │  │
+│  │  • LLM proxy       │  │                      │  │    (self-built)   │  │
+│  │  • Budget mgmt     │  │                      │  │                   │  │
+│  │  • Memory (pgvec)  │  │                      │  │  • /health  :9001 │  │
+│  │  • Git snapshots   │  │                      │  │  • App      :9000 │  │
+│  │  • Health monitor  │  │                      │  │  • Whatever it    │  │
+│  │  • Audit log       │  │                      │  │    builds next    │  │
+│  │  • Setup wizard    │  │                      │  │                   │  │
+│  └────────────────────┘  │                      │  └───────────────────┘  │
+│                          │                      │                         │
+│  ┌────────────────────┐  │                      │  /opt/jodo/brain/       │
+│  │  PostgreSQL        │  │                      │                         │
+│  │  + pgvector        │  │                      │                         │
+│  └────────────────────┘  │                      │                         │
+└──────────────────────────┘                      └─────────────────────────┘
 ```
 
-**The Kernel** (VPS 1) is the BIOS. It doesn't think — it provides infrastructure. LLM inference, memory, version control, health monitoring, and the conversation store. It runs in Docker.
+**The Kernel** is the BIOS. It doesn't think — it provides infrastructure. LLM inference, memory, version control, health monitoring, the chat UI, and the conversation store. It runs in Docker.
 
-**Jodo** (VPS 2) is the agent. It runs as `seed.py` — a small Python script that knows how to think (via the kernel), use tools, and loop. On its first boot (galla 0), it builds a chat app so you can talk to it. After that, seed.py keeps running as Jodo's consciousness — waking up, thinking, and evolving every galla.
+**Jodo** is the agent. It runs as `seed.py` — a small Python script that knows how to think (via the kernel), use tools, and loop. On its first boot (galla 0), it builds an app with a health endpoint so the kernel can monitor it. After that, seed.py keeps running as Jodo's consciousness — waking up, thinking, and evolving every galla.
 
-**The conversation** flows through the kernel. The human types in the chat UI (port 9000) → the chat app posts the message to the kernel's chat API → seed.py fetches new messages each galla → Jodo thinks and replies via the kernel. The kernel is the single source of truth for all human ↔ Jodo conversation.
+**The conversation** flows through the kernel. The human types in the kernel's chat UI → seed.py fetches new messages each galla → Jodo thinks and replies via the kernel. The kernel is the single source of truth for all human-Jodo conversation.
+
+Jodo can run as a **Docker container** on the same machine as the kernel (easiest), or on a **separate VPS** (more isolation). Both modes use SSH — the kernel SSHes into the Jodo environment to deploy, manage, and monitor.
 
 ## The seed
 
@@ -69,6 +66,8 @@ born → think → act → sleep → wake → think → act → sleep → ...
 
 Each cycle is a **galla** — Jodo's unit of lived time.
 
+Every wakeup galla follows a plan-then-execute pattern: seed.py first lets Jodo inspect its environment with read-only tools, then asks it to execute the plan with all tools available.
+
 ## The kernel
 
 The kernel provides APIs that Jodo calls via HTTP:
@@ -77,7 +76,7 @@ The kernel provides APIs that Jodo calls via HTTP:
 |----------|---------|
 | `POST /api/think` | LLM inference — Jodo's ability to think |
 | `POST /api/chat` | Send a chat message (human or Jodo) |
-| `GET /api/chat` | Read chat messages (`?last=N`, `?source=human`, `?since_id=N`) |
+| `GET /api/chat` | Read chat messages (`?last=N`, `?source=human`, `?unread=true`) |
 | `POST /api/memory/store` | Store a memory (vector-embedded) |
 | `POST /api/memory/search` | Semantic memory search |
 | `POST /api/commit` | Git snapshot of Jodo's code |
@@ -96,164 +95,144 @@ Budget tracking prevents runaway costs. Each provider has a monthly cap with an 
 
 ## Health & recovery
 
-The kernel monitors seed.py's `/health` endpoint (port 9001) and escalates on failure:
+The kernel monitors seed.py's `/health` endpoint and escalates on failure:
 
 | Failures | Action |
 |----------|--------|
-| 1–2 | Wait and retry |
+| 1-2 | Wait and retry |
 | 3 | Restart process |
 | 6 | Rollback to last stable git tag |
 | 9 | Nuclear rebirth — wipe brain, redeploy seed |
 
-Every 5 minutes of healthy uptime, the kernel auto-tags a stable version.
-
-## Audit trail
-
-Every LLM request/response and every log message from Jodo is captured in `/var/log/jodo-audit.jsonl` on the kernel. You can `tail -f` it to watch Jodo think in real time.
+Every 5 minutes of healthy uptime, the kernel auto-tags a stable version. If Jodo's app (port 9000) goes down, the kernel nudges Jodo to fix it.
 
 ## Setup
 
 ### Prerequisites
 
-- Two servers (any cheap VPS works)
-- **VPS 1** (Kernel): Docker & Docker Compose
-- **VPS 2** (Jodo): Python 3, pip, git
+- A server with **Docker** and **Docker Compose** installed
+- Git (to clone this repo)
 
-### 1. Prepare VPS 2 (Jodo's brain)
+That's it. Everything else runs inside containers.
 
-```bash
-apt update && apt install -y python3 python3-pip git
-pip install requests
-mkdir -p /opt/jodo/brain && cd /opt/jodo/brain && git init
-ufw allow 9000/tcp   # Jodo's app (chat interface)
-ufw allow 9001/tcp   # seed.py health (kernel monitoring)
-```
-
-### 2. Set up SSH keys (on VPS 1)
-
-The kernel SSHes into VPS 2 to deploy and manage Jodo.
+### Quick start
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/jodo_vps -N ""
-ssh-copy-id -i ~/.ssh/jodo_vps.pub root@<VPS2_IP>
+git clone <repo-url> jodo
+cd jodo
+chmod +x jodo.sh
+./jodo.sh setup
+./jodo.sh start
 ```
 
-### 3. Configure and launch (on VPS 1)
+`setup` asks one question — where Jodo should live:
 
-`.env` is the only file you need to edit. Everything else is a template.
+1. **Docker container** (default) — Jodo runs alongside the kernel on the same machine. Easiest to get started.
+2. **Separate VPS** — you provide a second server. More isolation, but requires manual SSH key setup.
+
+It then generates an encryption key, database password, and (in Docker mode) an SSH key pair. Everything is stored in `kernel/.env`.
+
+### Setup wizard
+
+After `./jodo.sh start`, open **http://your-server:8080** in your browser. The kernel starts in setup mode with a wizard that walks you through:
+
+1. **SSH Connection** — In Docker mode, just verify the connection. In VPS mode, generate an SSH key, copy it to VPS 2, and verify.
+2. **Server Setup** — Set the brain directory path and provision the server (creates the directory, initializes git, checks Python/pip).
+3. **Kernel URL** (VPS mode only) — The URL Jodo uses to reach the kernel. In Docker mode this is auto-configured.
+4. **Providers** — Configure LLM providers (Ollama is enabled by default, optionally add Claude or OpenAI with API keys and budgets).
+5. **Genesis** — Jodo's identity: name, purpose, survival instincts, first tasks, and coding hints.
+6. **Review & Birth** — Review everything and click "Birth Jodo".
+
+All configuration is stored in the database (encrypted where sensitive). No config files to edit manually.
+
+### Watch it come alive
 
 ```bash
-cd kernel/
-cp .env.example .env
+./jodo.sh logs          # kernel logs
+./jodo.sh logs jodo     # Jodo container logs (Docker mode)
 ```
 
-Edit `.env`:
+Once galla 0 completes, Jodo should have a `/health` endpoint running on port 9000 and have introduced itself in the chat UI at **http://your-server:8080**.
+
+### VPS mode
+
+If you chose VPS mode, you need a second server with Python 3, pip, and git. The setup wizard handles SSH key generation and connection verification. You'll need to manually copy the public key to VPS 2's `~/.ssh/authorized_keys`.
 
 ```bash
-# Required
-KERNEL_URL=http://<VPS1_IP>:8080    # how Jodo reaches this kernel
-JODO_IP=<VPS2_IP>                    # Jodo's server
-JODO_DB_PASSWORD=<strong-password>
-
-# SSH (defaults shown — only change if needed)
-SSH_KEY_PATH=~/.ssh/jodo_vps
-SSH_USER=root
-
-# LLM API keys (optional — Ollama is free and preferred)
-CLAUDE_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-
-# Budgets (USD per month, defaults shown)
-CLAUDE_MONTHLY_BUDGET=20.00
-OPENAI_MONTHLY_BUDGET=10.00
+# On VPS 2
+ufw allow 9000/tcp   # Jodo's app
+ufw allow 9001/tcp   # seed.py health endpoint
 ```
 
-Launch:
+## Managing Jodo
 
 ```bash
-docker compose up -d
+./jodo.sh setup      # Generate .env and configure deployment mode
+./jodo.sh start      # Start all containers
+./jodo.sh stop       # Stop all containers
+./jodo.sh logs       # Follow kernel logs (or: logs jodo, logs postgres)
+./jodo.sh destroy    # Stop and delete all data (requires typing 'destroy')
+./jodo.sh help       # Show available commands
 ```
 
-The kernel will:
-1. Start PostgreSQL + pgvector
-2. Boot the kernel on `:8080`
-3. SSH into VPS 2 and deploy `seed.py`
-4. Seed wakes up, calls `/api/think`, and starts building
+## Audit trail
 
-### 4. Watch it come alive
-
-```bash
-# Kernel logs
-docker compose logs -f kernel
-
-# Audit trail (every prompt and response)
-tail -f /var/log/jodo-audit.jsonl | jq .
-```
-
-Once galla 0 completes, Jodo should have a chat interface at `http://<VPS2_IP>:9000`.
+Every LLM request/response and every log message from Jodo is captured in `/var/log/jodo-audit.jsonl` on the kernel. You can `tail -f` it to watch Jodo think in real time.
 
 ## Project structure
 
 ```
 jodo/
-├── README.md
-├── kernel/                     # The BIOS (Go)
-│   ├── cmd/kernel/main.go      # Entry point
+├── jodo.sh                        # CLI for setup, start, stop, destroy
+├── kernel/                        # The BIOS (Go + Vue)
+│   ├── cmd/kernel/main.go         # Entry point
 │   ├── internal/
-│   │   ├── api/                # HTTP endpoints (think, memory, lifecycle, ...)
-│   │   ├── audit/              # JSONL audit logger
-│   │   ├── config/             # YAML config + env var expansion
-│   │   ├── dashboard/          # Status dashboard
-│   │   ├── db/                 # PostgreSQL + pgvector migrations
-│   │   ├── git/                # Remote git ops via SSH
-│   │   ├── growth/             # Growth/milestone log
-│   │   ├── llm/                # LLM proxy, routing, budget, transformers
-│   │   │   ├── jodo_format.go  # Unified request/response types
-│   │   │   ├── proxy.go        # Main gateway (route → transform → call → parse)
-│   │   │   ├── router.go       # Intent-based provider selection
-│   │   │   ├── budget.go       # Cost tracking + chain budgets
-│   │   │   ├── transform_*.go  # Claude / OpenAI / Ollama format adapters
-│   │   │   └── providers.go    # Provider interface
-│   │   ├── memory/             # Vector memory (store + semantic search)
-│   │   └── process/            # Process lifecycle, health checks, recovery
-│   ├── seed/seed.py            # The seed — Jodo's first breath
-│   ├── configs/
-│   │   ├── config.yaml         # Kernel + provider + routing config
-│   │   └── genesis.yaml        # Jodo's identity and purpose
-│   ├── Dockerfile
-│   ├── docker-compose.yaml
-│   └── .env.example
+│   │   ├── api/                   # HTTP endpoints + setup wizard
+│   │   ├── audit/                 # JSONL audit logger
+│   │   ├── config/                # DB-backed config store + encryption
+│   │   ├── crypto/                # AES encryption for secrets
+│   │   ├── db/                    # PostgreSQL + pgvector migrations
+│   │   ├── git/                   # Remote git ops via SSH
+│   │   ├── growth/                # Growth/milestone log
+│   │   ├── llm/                   # LLM proxy, routing, budget
+│   │   │   ├── proxy.go           # Main gateway (route → transform → call)
+│   │   │   ├── router.go          # Intent-based provider selection
+│   │   │   ├── budget.go          # Cost tracking per provider
+│   │   │   └── transform_*.go     # Claude / OpenAI / Ollama adapters
+│   │   ├── memory/                # Vector memory (store + semantic search)
+│   │   └── process/               # Process lifecycle, health, recovery
+│   ├── seed/
+│   │   ├── seed.py                # The seed — Jodo's consciousness loop
+│   │   └── prompts/               # birth, wakeup, plan prompt templates
+│   ├── web/                       # Frontend (Vue 3 + TypeScript + Tailwind)
+│   │   └── src/
+│   │       ├── views/             # Chat, Status, Settings, Setup Wizard, ...
+│   │       ├── components/        # UI components organized by feature
+│   │       ├── composables/       # Vue composition functions
+│   │       └── lib/               # API client, SSE, utilities
+│   ├── docker/
+│   │   └── jodo/                  # Jodo container (Python + SSH)
+│   │       ├── Dockerfile
+│   │       └── entrypoint.sh
+│   ├── Dockerfile                 # Kernel container (Go + Alpine)
+│   └── docker-compose.yaml
 ```
 
 ## Upgrading
 
-After making changes, push to VPS 1 and restart:
-
 ```bash
-# On VPS 1
-cd ~/jodo/kernel
+cd ~/jodo
 git pull
+./jodo.sh start    # rebuilds containers automatically
 ```
 
-**If you changed Go code** (anything in `cmd/`, `internal/`):
-
-```bash
-docker compose up -d --build
-```
-
-**If you only changed `seed.py` or `configs/`** (volume-mounted — no rebuild needed):
-
-```bash
-docker compose restart kernel
-```
-
-The kernel will SSH into VPS 2, kill the old seed.py, deploy the new one, and start it. Jodo's apps (main.py etc.) keep running unless you do a nuclear restart.
+The kernel will SSH into Jodo's environment, deploy the updated seed.py, and restart. Jodo's self-built apps (main.py etc.) keep running unless a nuclear restart occurs.
 
 ## Philosophy
 
 Jodo isn't a chatbot framework or an agent library. It's an experiment in minimal viable life.
 
-The seed gives just enough to bootstrap: three tools to interact with the world, an LLM to think, and a loop to keep going. Everything else — the chat interface, the personality, the features — Jodo builds for itself.
+The seed gives just enough to bootstrap: four tools to interact with the world, an LLM to think, and a loop to keep going. Everything else — the personality, the features, the architecture — Jodo builds for itself.
 
 The kernel exists so Jodo doesn't have to worry about infrastructure. It handles the boring parts (routing, budgets, health, rollbacks) so Jodo can focus on the interesting part: figuring out what to become.
 

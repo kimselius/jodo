@@ -46,14 +46,14 @@ cmd_setup() {
   # Ask where Jodo should live
   echo ""
   info "Where should Jodo live?"
-  echo "  1) Separate VPS  — you provide a second server for Jodo"
-  echo "  2) Docker container — Jodo runs alongside the kernel on this machine"
+  echo "  1) Docker container — Jodo runs alongside the kernel on this machine (easiest)"
+  echo "  2) Separate VPS     — you provide a second server for Jodo"
   echo ""
   read -rp "Choose [1/2] (default: 1): " mode_choice
 
-  JODO_MODE="vps"
+  JODO_MODE="docker"
   if [[ "$mode_choice" == "2" ]]; then
-    JODO_MODE="docker"
+    JODO_MODE="vps"
   fi
 
   cat > "$ENV_FILE" << EOF
