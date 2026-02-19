@@ -444,7 +444,31 @@ func autoMigrateYAML(store *config.DBStore, database *sql.DB) bool {
 }
 
 func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, growthLog *growth.Logger) {
-	log.Println("[boot] connecting to VPS 2...")
+	log.Println("[boot] connecting to Jodo host...")
+
+	// Wait for SSH to become available (Jodo container may still be starting)
+	sshReady := false
+	for i := 0; i < 15; i++ {
+		if _, err := proc.RunSSH("echo ok"); err == nil {
+			sshReady = true
+			break
+		}
+		log.Printf("[boot] SSH not ready (attempt %d/15), waiting 2s...", i+1)
+		time.Sleep(2 * time.Second)
+	}
+	if !sshReady {
+		log.Println("[boot] SSH connection failed after retries — seed.py may already be running from entrypoint")
+		proc.SetGracePeriod(60 * time.Second)
+		return
+	}
+
+	// Check if seed.py is already running (e.g. Docker entrypoint auto-started it)
+	if pid, err := proc.GetPID(); err == nil && pid > 0 {
+		log.Printf("[boot] seed.py already running (PID %d) — skipping re-deploy")
+		proc.SetStatus("starting")
+		proc.SetGracePeriod(30 * time.Second)
+		return
+	}
 
 	hasGit := gitMgr.GitExists()
 	hasMainPy := gitMgr.MainPyExists()
