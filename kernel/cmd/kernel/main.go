@@ -177,16 +177,44 @@ func main() {
 func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, growthLog *growth.Logger) {
 	log.Println("[boot] connecting to VPS 2...")
 
+	// Detect brain state: is this a normal restart or a rebirth?
+	hasGit := gitMgr.GitExists()
+	hasMainPy := gitMgr.MainPyExists()
+	hasGalla := gitMgr.GallaFileExists()
+	hasPreviousLife := hasGit || hasMainPy
+
+	if hasPreviousLife && !hasGalla {
+		// .git or main.py exists but no .galla file — inconsistent state.
+		// seed.py writes .galla every galla, so its absence means something
+		// went wrong. Wipe brain and let Jodo start fresh.
+		log.Printf("[boot] REBIRTH: previous life detected (git=%v, main.py=%v) but no .galla — wiping brain", hasGit, hasMainPy)
+
+		proc.StopAll()
+
+		// Backup before wipe (skip if > 250MB)
+		if backupPath, err := gitMgr.BackupBrain(250); err != nil {
+			log.Printf("[boot] backup skipped: %v", err)
+		} else {
+			log.Printf("[boot] brain backed up to %s", backupPath)
+		}
+
+		if err := gitMgr.WipeBrain(); err != nil {
+			log.Printf("[boot] wipe failed: %v", err)
+		}
+
+		growthLog.Log("rebirth", "Boot rebirth: previous life without .galla — backed up and wiped brain", "", nil)
+	} else {
+		// Normal boot — stop old seed.py but leave Jodo's apps alive
+		proc.StopSeed()
+	}
+
 	// Initialize git repo on VPS 2
 	if err := gitMgr.Init(); err != nil {
 		log.Printf("[boot] git init warning: %v", err)
 	}
 
-	// Stop old seed.py (if running) but leave Jodo's apps alive.
-	proc.StopSeed()
-
 	// Deploy and start fresh seed.py — it IS Jodo's consciousness.
-	// seed.py detects if main.py exists and resumes the galla loop.
+	// seed.py detects .galla file and resumes the galla loop.
 	log.Println("[boot] deploying seed.py...")
 	if err := proc.StartSeed(seedPath()); err != nil {
 		log.Printf("[boot] seed failed: %v", err)

@@ -7,6 +7,8 @@ export interface StatusResponse {
   jodo: {
     status: 'running' | 'starting' | 'unhealthy' | 'dead' | 'rebirthing' | string
     pid: number
+    galla: number
+    phase: 'booting' | 'thinking' | 'sleeping' | string
     uptime_seconds: number
     last_health_check: string
     health_check_ok: boolean

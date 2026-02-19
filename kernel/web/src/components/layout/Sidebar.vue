@@ -10,6 +10,8 @@ const { status } = useStatus(15_000)
 
 const jodoName = computed(() => status.value?.jodo?.current_git_tag || 'Jodo')
 const jodoStatus = computed(() => status.value?.jodo?.status || 'unknown')
+const jodoPhase = computed(() => status.value?.jodo?.phase || '')
+const jodoGalla = computed(() => status.value?.jodo?.galla ?? 0)
 
 const statusVariant = computed(() => {
   switch (jodoStatus.value) {
@@ -20,6 +22,33 @@ const statusVariant = computed(() => {
     case 'rebirthing': return 'accent'
     default: return 'secondary'
   }
+})
+
+// Activity label for the footer indicator
+const activityLabel = computed(() => {
+  const s = jodoStatus.value
+  if (s === 'dead') return 'Offline'
+  if (s === 'starting') return 'Starting...'
+  if (s === 'rebirthing') return 'Rebirthing...'
+  if (s === 'unhealthy') return 'Unhealthy'
+  // running — use phase
+  switch (jodoPhase.value) {
+    case 'thinking': return `Thinking (g${jodoGalla.value})`
+    case 'sleeping': return 'Sleeping'
+    case 'booting': return 'Booting...'
+    default: return 'Running'
+  }
+})
+
+// Dot color class for the footer indicator
+const activityDotClass = computed(() => {
+  const s = jodoStatus.value
+  if (s === 'dead') return 'bg-red-500'
+  if (s === 'unhealthy') return 'bg-amber-500'
+  if (s === 'starting' || s === 'rebirthing') return 'bg-amber-500 animate-pulse'
+  if (jodoPhase.value === 'thinking') return 'bg-green-500 animate-pulse'
+  if (jodoPhase.value === 'sleeping') return 'bg-blue-400'
+  return 'bg-green-500'
 })
 
 const navItems = [
@@ -92,9 +121,12 @@ defineEmits<{ close: [] }>()
 
     <Separator />
 
-    <!-- Footer -->
+    <!-- Activity indicator -->
     <div class="p-3">
-      <p class="text-xs text-muted-foreground text-center">Jodo Kernel</p>
+      <div class="flex items-center gap-2 px-1">
+        <span :class="['inline-block h-2 w-2 rounded-full shrink-0', activityDotClass]" />
+        <span class="text-xs text-muted-foreground truncate">{{ activityLabel }}</span>
+      </div>
     </div>
   </div>
 </template>

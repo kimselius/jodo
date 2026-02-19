@@ -29,6 +29,8 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"jodo": gin.H{
 			"status":           jodoStatus.Status,
 			"pid":              jodoStatus.PID,
+			"galla":            jodoStatus.Galla,
+			"phase":            jodoStatus.Phase,
 			"uptime_seconds":   s.Process.UptimeSeconds(),
 			"last_health_check": jodoStatus.LastHealthCheck.Format(time.RFC3339),
 			"health_check_ok":  jodoStatus.HealthCheckOK,

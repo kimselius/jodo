@@ -37,6 +37,7 @@ last_actions = []
 _inbox = []
 _inbox_lock = threading.Lock()
 _heartbeat = time.time()  # updated each galla cycle
+_phase = "booting"  # booting, thinking, sleeping
 # Max time before health reports unhealthy (sleep + think timeout + buffer)
 _HEARTBEAT_MAX = SLEEP_SECONDS + 600 + 60
 
@@ -57,6 +58,7 @@ class SeedHandler(BaseHTTPRequestHandler):
                 "status": status,
                 "galla": galla,
                 "alive": alive,
+                "phase": _phase,
                 "heartbeat_age": int(time.time() - _heartbeat),
             }).encode()
             self.send_response(code)
@@ -316,6 +318,20 @@ def remember(content, tags=None):
         )
     except Exception as e:
         log(f"Remember failed: {e}")
+
+
+def set_phase(phase):
+    """Update phase locally and push to kernel for real-time UI."""
+    global _phase
+    _phase = phase
+    try:
+        kernel_http.post(
+            f"{KERNEL}/api/heartbeat",
+            json={"phase": phase, "galla": galla},
+            timeout=2,
+        )
+    except Exception:
+        pass
 
 
 def commit(message):
@@ -914,6 +930,7 @@ def live():
     while alive:
         try:
             _heartbeat = time.time()
+            set_phase("thinking")
             log(f"Galla {galla} — awake")
 
             # Drain system inbox (kernel nudges etc.)
@@ -960,6 +977,7 @@ def live():
 
         galla += 1
         save_galla(galla)
+        set_phase("sleeping")
 
         log(f"Sleeping {SLEEP_SECONDS}s...")
         time.sleep(SLEEP_SECONDS)

@@ -92,6 +92,13 @@ func (r *Recovery) nuclearRebirth(failCount int) {
 		log.Printf("[recovery] stop failed: %v", err)
 	}
 
+	// Backup before wipe (skip if > 250MB)
+	if backupPath, err := r.gitMgr.BackupBrain(250); err != nil {
+		log.Printf("[recovery] backup skipped: %v", err)
+	} else {
+		log.Printf("[recovery] brain backed up to %s", backupPath)
+	}
+
 	if err := r.gitMgr.WipeBrain(); err != nil {
 		log.Printf("[recovery] wipe failed: %v", err)
 	}

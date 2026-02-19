@@ -27,6 +27,8 @@ type Manager struct {
 type JodoStatus struct {
 	Status          string    `json:"status"` // running, starting, unhealthy, dead, rebirthing
 	PID             int       `json:"pid"`
+	Galla           int       `json:"galla"`
+	Phase           string    `json:"phase"` // booting, thinking, sleeping
 	UptimeStart     time.Time `json:"-"`
 	LastHealthCheck time.Time `json:"last_health_check"`
 	HealthCheckOK   bool      `json:"health_check_ok"`
@@ -81,6 +83,14 @@ func (m *Manager) SetHealthResult(ok bool) {
 			log.Printf("[process] discovered Jodo PID: %d", pid)
 		}
 	}
+}
+
+// SetHeartbeat updates galla and phase from seed.py's heartbeat POST.
+func (m *Manager) SetHeartbeat(galla int, phase string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.status.Galla = galla
+	m.status.Phase = phase
 }
 
 // IncrementRestarts increments today's restart counter.

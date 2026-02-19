@@ -183,6 +183,24 @@ func (m *Manager) StableTagCount() (int, error) {
 	return count, nil
 }
 
+// GallaFileExists checks if .galla file exists in the brain directory.
+func (m *Manager) GallaFileExists() bool {
+	output, err := m.sshRunner(fmt.Sprintf("test -f %s/.galla && echo 'yes' || echo 'no'", m.cfg.BrainPath))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "yes"
+}
+
+// MainPyExists checks if main.py exists in the brain directory.
+func (m *Manager) MainPyExists() bool {
+	output, err := m.sshRunner(fmt.Sprintf("test -f %s/main.py && echo 'yes' || echo 'no'", m.cfg.BrainPath))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "yes"
+}
+
 // GitExists checks if .git directory exists on VPS 2.
 func (m *Manager) GitExists() bool {
 	output, err := m.sshRunner(fmt.Sprintf("test -d %s/.git && echo 'yes' || echo 'no'", m.cfg.BrainPath))

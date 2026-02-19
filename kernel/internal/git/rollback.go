@@ -2,7 +2,9 @@ package git
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // RollbackResponse is the API response for a rollback.
@@ -64,6 +66,34 @@ func (m *Manager) WipeBrain() error {
 		}
 	}
 	return nil
+}
+
+// BackupBrain creates a tar.gz backup of the brain directory before a wipe.
+// Returns the backup path, or an error. Skips backup if dir > maxMB.
+func (m *Manager) BackupBrain(maxMB int) (string, error) {
+	// Check directory size
+	sizeOut, err := m.sshRunner(fmt.Sprintf("du -sm %s 2>/dev/null | cut -f1", m.cfg.BrainPath))
+	if err != nil {
+		return "", fmt.Errorf("check brain size: %w", err)
+	}
+	sizeMB, _ := strconv.Atoi(strings.TrimSpace(sizeOut))
+	if sizeMB > maxMB {
+		return "", fmt.Errorf("brain too large (%dMB > %dMB limit), skipping backup", sizeMB, maxMB)
+	}
+
+	// Create backups directory
+	backupDir := "/opt/jodo/backups"
+	m.sshRunner(fmt.Sprintf("mkdir -p %s", backupDir))
+
+	// Create timestamped backup
+	ts := time.Now().UTC().Format("20060102-150405")
+	backupPath := fmt.Sprintf("%s/brain-%s.tar.gz", backupDir, ts)
+	cmd := fmt.Sprintf("tar czf %s -C %s . 2>/dev/null", backupPath, m.cfg.BrainPath)
+	if _, err := m.sshRunner(cmd); err != nil {
+		return "", fmt.Errorf("create backup: %w", err)
+	}
+
+	return backupPath, nil
 }
 
 // ListTags returns all tags.

@@ -69,6 +69,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.PUT("/genesis/identity", s.handleGenesisIdentityPut)
 		api.GET("/memories", s.handleMemoriesList)
 		api.GET("/growth", s.handleGrowthLog)
+		api.POST("/heartbeat", s.handleHeartbeat)
 	}
 
 	return r
