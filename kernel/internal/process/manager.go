@@ -171,9 +171,7 @@ func (m *Manager) StartJodo() error {
 	log.Printf("[process] starting seed.py on %s", m.cfg.Host)
 
 	cmd := fmt.Sprintf(
-		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
-		m.cfg.BrainPath,
-		m.kernelURL,
+		`cd %s && nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
 		m.cfg.BrainPath,
 		m.cfg.BrainPath,
 	)
@@ -221,6 +219,14 @@ func (m *Manager) StartSeed(seedPath string) error {
 		log.Printf("[process] merged prompt files from %s", promptsDir)
 	}
 
+	// Replace config markers with actual values
+	seedData = bytes.ReplaceAll(seedData, []byte("__KERNEL_URL__"), []byte(m.kernelURL))
+	seedData = bytes.ReplaceAll(seedData, []byte("__BRAIN_PATH__"), []byte(m.cfg.BrainPath))
+	seedData = bytes.ReplaceAll(seedData, []byte("__SEED_PORT__"), []byte(strconv.Itoa(m.cfg.Port)))
+	seedData = bytes.ReplaceAll(seedData, []byte("__APP_PORT__"), []byte(strconv.Itoa(m.cfg.AppPort)))
+	log.Printf("[process] replaced config markers (kernel=%s, brain=%s, seed_port=%d, app_port=%d)",
+		m.kernelURL, m.cfg.BrainPath, m.cfg.Port, m.cfg.AppPort)
+
 	// Write seed.py via SSH (using heredoc)
 	writeCmd := fmt.Sprintf(
 		`cat > %s/seed.py << 'SEEDEOF'
@@ -234,9 +240,7 @@ SEEDEOF`,
 
 	// Run seed (use absolute path so pkill -f can match reliably)
 	cmd := fmt.Sprintf(
-		`cd %s && JODO_KERNEL_URL=%s JODO_BRAIN_PATH=%s nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
-		m.cfg.BrainPath,
-		m.kernelURL,
+		`cd %s && nohup python3 %s/seed.py > /var/log/jodo.log 2>&1 & echo $!`,
 		m.cfg.BrainPath,
 		m.cfg.BrainPath,
 	)

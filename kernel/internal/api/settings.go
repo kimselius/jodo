@@ -203,10 +203,17 @@ func (s *Server) handleSettingsSSHGet(c *gin.Context) {
 	_, err := s.ConfigStore.GetSecret("ssh_private_key")
 	hasKey := err == nil
 
+	brainPath := s.ConfigStore.GetConfig("jodo.brain_path")
+	if brainPath == "" {
+		brainPath = "/opt/jodo/brain"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"host":    host,
-		"user":    user,
-		"has_key": hasKey,
+		"host":       host,
+		"user":       user,
+		"has_key":    hasKey,
+		"brain_path": brainPath,
+		"jodo_mode":  s.JodoMode,
 	})
 }
 

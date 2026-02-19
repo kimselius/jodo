@@ -1,5 +1,6 @@
 export interface SetupStatus {
   setup_complete: boolean
+  jodo_mode: 'vps' | 'docker'
 }
 
 export interface SSHGenerateResponse {
@@ -69,6 +70,19 @@ export interface SSHStatus {
   host: string
   user: string
   has_key: boolean
+  brain_path: string
+  jodo_mode: 'vps' | 'docker'
+}
+
+export interface ProvisionStep {
+  name: string
+  ok: boolean
+  output: string
+}
+
+export interface ProvisionResult {
+  success: boolean
+  steps: ProvisionStep[]
 }
 
 export interface KernelSettings {

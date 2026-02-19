@@ -8,6 +8,7 @@ import type {
   SetupStatus, SSHGenerateResponse, SSHVerifyResponse,
   TestProviderResponse, ProviderSetup, GenesisSetup,
   ProviderInfo, SSHStatus, KernelSettings, RoutingConfig,
+  ProvisionResult,
 } from '@/types/setup'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -132,6 +133,19 @@ export const api = {
 
   setupBirth() {
     return request<{ ok: boolean; message: string }>('/api/setup/birth', { method: 'POST' })
+  },
+
+  setupProvision(brainPath: string) {
+    return request<ProvisionResult>('/api/setup/provision', {
+      method: 'POST',
+      body: JSON.stringify({ brain_path: brainPath }),
+    })
+  },
+
+  setupDockerInstallKey() {
+    return request<{ ok: boolean; error?: string }>('/api/setup/docker/install-key', {
+      method: 'POST',
+    })
   },
 
   // Settings

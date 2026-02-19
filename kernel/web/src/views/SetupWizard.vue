@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useSetup } from '@/composables/useSetup'
 import StepVPS from '@/components/setup/StepVPS.vue'
+import StepServerSetup from '@/components/setup/StepServerSetup.vue'
 import StepKernelURL from '@/components/setup/StepKernelURL.vue'
 import StepProviders from '@/components/setup/StepProviders.vue'
 import StepGenesis from '@/components/setup/StepGenesis.vue'
@@ -53,10 +54,25 @@ const setup = useSetup()
         <StepVPS
           v-if="setup.currentStep.value === 'vps'"
           :vps="setup.vps"
+          :jodo-mode="setup.jodoMode.value"
           :error="setup.error.value"
           @generate="setup.generateSSHKey()"
           @verify="setup.verifySSH()"
+          @install-docker-key="setup.installDockerKey()"
           @next="setup.nextStep()"
+        />
+
+        <StepServerSetup
+          v-else-if="setup.currentStep.value === 'server-setup'"
+          :brain-path="setup.brainPath.value"
+          :provisioning="setup.provisioning.value"
+          :provision-steps="setup.provisionSteps.value"
+          :provisioned="setup.provisioned.value"
+          :error="setup.error.value"
+          @update:brain-path="setup.brainPath.value = $event"
+          @provision="setup.provisionServer()"
+          @next="setup.nextStep()"
+          @back="setup.prevStep()"
         />
 
         <StepKernelURL
@@ -84,6 +100,8 @@ const setup = useSetup()
           v-else-if="setup.currentStep.value === 'review'"
           :vps="setup.vps"
           :kernel-url="setup.kernelUrl.value"
+          :brain-path="setup.brainPath.value"
+          :jodo-mode="setup.jodoMode.value"
           :providers="setup.providers.value"
           :genesis="setup.genesis.value"
           :birthing="setup.birthing.value"

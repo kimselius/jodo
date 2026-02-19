@@ -1,6 +1,6 @@
 import { ref, reactive } from 'vue'
 import { api } from '@/lib/api'
-import type { ProviderSetup, GenesisSetup } from '@/types/setup'
+import type { ProviderSetup, GenesisSetup, ProvisionStep } from '@/types/setup'
 
 // Default model configs matching the previous config.yaml
 const DEFAULT_PROVIDERS: ProviderSetup[] = [
@@ -105,15 +105,18 @@ Your goal is to be genuinely useful to them.`,
   capabilities_local: [],
 }
 
-export type SetupStep = 'vps' | 'kernel-url' | 'providers' | 'genesis' | 'review'
+export type SetupStep = 'vps' | 'server-setup' | 'kernel-url' | 'providers' | 'genesis' | 'review'
 
-const STEPS: SetupStep[] = ['vps', 'kernel-url', 'providers', 'genesis', 'review']
+const STEPS: SetupStep[] = ['vps', 'server-setup', 'kernel-url', 'providers', 'genesis', 'review']
 
 export function useSetup() {
   const currentStep = ref<SetupStep>('vps')
   const loading = ref(false)
   const error = ref<string | null>(null)
   const birthing = ref(false)
+
+  // Jodo mode (vps or docker)
+  const jodoMode = ref<'vps' | 'docker'>('vps')
 
   // VPS step
   const vps = reactive({
@@ -124,6 +127,12 @@ export function useSetup() {
     verifying: false,
     generating: false,
   })
+
+  // Server setup step
+  const brainPath = ref('/opt/jodo/brain')
+  const provisioning = ref(false)
+  const provisionSteps = ref<ProvisionStep[]>([])
+  const provisioned = ref(false)
 
   // Kernel URL step
   const kernelUrl = ref('')
@@ -149,6 +158,66 @@ export function useSetup() {
     const idx = currentStepIndex()
     if (idx > 0) {
       currentStep.value = STEPS[idx - 1]
+    }
+  }
+
+  async function fetchSetupStatus() {
+    try {
+      const res = await api.getSetupStatus()
+      jodoMode.value = res.jodo_mode || 'vps'
+      if (jodoMode.value === 'docker') {
+        vps.host = 'jodo'
+        vps.sshUser = 'root'
+      }
+    } catch {
+      // Default to vps mode
+    }
+  }
+
+  // Fetch on init
+  fetchSetupStatus()
+
+  async function installDockerKey() {
+    vps.generating = true
+    error.value = null
+    try {
+      // Generate key first
+      const genRes = await api.setupSSHGenerate()
+      vps.publicKey = genRes.public_key
+      // Install into container
+      const installRes = await api.setupDockerInstallKey()
+      if (!installRes.ok) {
+        error.value = installRes.error || 'Failed to install key in container'
+        return
+      }
+      // Auto-verify
+      const verifyRes = await api.setupSSHVerify('jodo', 'root')
+      vps.verified = verifyRes.connected
+      if (!verifyRes.connected) {
+        error.value = verifyRes.error || 'SSH verification to container failed'
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Docker key install failed'
+    } finally {
+      vps.generating = false
+    }
+  }
+
+  async function provisionServer() {
+    provisioning.value = true
+    provisionSteps.value = []
+    error.value = null
+    try {
+      const res = await api.setupProvision(brainPath.value)
+      provisionSteps.value = res.steps
+      provisioned.value = res.success
+      if (!res.success) {
+        error.value = 'Some provisioning steps failed'
+      }
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Provisioning failed'
+    } finally {
+      provisioning.value = false
     }
   }
 
@@ -226,7 +295,12 @@ export function useSetup() {
     loading,
     error,
     birthing,
+    jodoMode,
     vps,
+    brainPath,
+    provisioning,
+    provisionSteps,
+    provisioned,
     kernelUrl,
     providers,
     genesis,
@@ -235,6 +309,8 @@ export function useSetup() {
     prevStep,
     generateSSHKey,
     verifySSH,
+    installDockerKey,
+    provisionServer,
     saveConfig,
     birth,
   }

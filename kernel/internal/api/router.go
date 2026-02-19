@@ -34,6 +34,7 @@ type Server struct {
 	ConfigStore   *config.DBStore
 	Encryptor     *crypto.Encryptor
 	SetupComplete bool
+	JodoMode      string       // "vps" or "docker"
 	OnBirth       func() error // called by setup wizard to birth Jodo
 }
 
@@ -83,6 +84,8 @@ func (s *Server) SetupRouter() *gin.Engine {
 		setup.POST("/test-provider", s.handleSetupTestProvider)
 		setup.POST("/birth", s.handleSetupBirth)
 		setup.POST("/config", s.handleSetupConfig)
+		setup.POST("/provision", s.handleSetupProvision)
+		setup.POST("/docker/install-key", s.handleSetupDockerInstallKey)
 	}
 
 	// Settings endpoints — require setup complete

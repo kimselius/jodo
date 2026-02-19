@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +19,7 @@ import (
 func (s *Server) handleSetupStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"setup_complete": s.SetupComplete,
+		"jodo_mode":      s.JodoMode,
 	})
 }
 
@@ -342,4 +345,133 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 
 	log.Println("[setup] Setup complete! Jodo is being born.")
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Jodo is being born!"})
+}
+
+// POST /api/setup/provision — SSH into VPS and set up the brain directory
+func (s *Server) handleSetupProvision(c *gin.Context) {
+	var req struct {
+		BrainPath string `json:"brain_path"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.BrainPath = "/opt/jodo/brain"
+	}
+	if req.BrainPath == "" {
+		req.BrainPath = "/opt/jodo/brain"
+	}
+
+	// Save brain path to DB
+	s.ConfigStore.SetConfig("jodo.brain_path", req.BrainPath)
+
+	// Get SSH credentials
+	host := s.ConfigStore.GetConfig("jodo.host")
+	sshUser := s.ConfigStore.GetConfig("jodo.ssh_user")
+	if host == "" || sshUser == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VPS connection not configured yet"})
+		return
+	}
+
+	privKeyPEM, err := s.ConfigStore.GetSecret("ssh_private_key")
+	if err != nil || privKeyPEM == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no SSH key generated yet"})
+		return
+	}
+
+	signer, err := ssh.ParsePrivateKey([]byte(privKeyPEM))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid stored SSH key"})
+		return
+	}
+
+	sshConfig := &ssh.ClientConfig{
+		User:            sshUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	}
+
+	addr := net.JoinHostPort(host, "22")
+	client, err := ssh.Dial("tcp", addr, sshConfig)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"steps":   []gin.H{{"name": "SSH connect", "ok": false, "output": err.Error()}},
+		})
+		return
+	}
+	defer client.Close()
+
+	// Run provisioning steps
+	type step struct {
+		Name string
+		Cmd  string
+	}
+	steps := []step{
+		{"Create directory", fmt.Sprintf("mkdir -p %s", req.BrainPath)},
+		{"Initialize git", fmt.Sprintf("cd %s && if [ ! -d .git ]; then git init && git config user.name 'Jodo' && git config user.email 'jodo@localhost' && echo 'initialized'; else echo 'already initialized'; fi", req.BrainPath)},
+		{"Check Python3", "python3 --version"},
+		{"Check pip", "pip3 --version"},
+		{"Check git", "git --version"},
+	}
+
+	var results []gin.H
+	allOk := true
+	for _, s := range steps {
+		session, err := client.NewSession()
+		if err != nil {
+			results = append(results, gin.H{"name": s.Name, "ok": false, "output": "failed to open SSH session"})
+			allOk = false
+			continue
+		}
+		output, err := session.CombinedOutput(s.Cmd)
+		session.Close()
+
+		ok := err == nil
+		if !ok {
+			allOk = false
+		}
+		results = append(results, gin.H{"name": s.Name, "ok": ok, "output": strings.TrimSpace(string(output))})
+	}
+
+	log.Printf("[setup] provision %s@%s brain=%s success=%v", sshUser, host, req.BrainPath, allOk)
+	c.JSON(http.StatusOK, gin.H{"success": allOk, "steps": results})
+}
+
+// POST /api/setup/docker/install-key — install SSH public key into jodo Docker container
+func (s *Server) handleSetupDockerInstallKey(c *gin.Context) {
+	if s.JodoMode != "docker" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "not in Docker mode"})
+		return
+	}
+
+	// Get the public key — regenerate from stored private key
+	privKeyPEM, err := s.ConfigStore.GetSecret("ssh_private_key")
+	if err != nil || privKeyPEM == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no SSH key generated yet — generate one first"})
+		return
+	}
+
+	// Parse private key to get public key
+	signer, err := ssh.ParsePrivateKey([]byte(privKeyPEM))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid stored SSH key"})
+		return
+	}
+	pubKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+
+	// Install via docker exec
+	cmd := exec.Command("docker", "exec", "jodo", "sh", "-c",
+		fmt.Sprintf("mkdir -p /root/.ssh && echo '%s' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys", pubKey))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[setup] docker install-key failed: %v output: %s", err, string(output))
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": fmt.Sprintf("docker exec failed: %v", err)})
+		return
+	}
+
+	// Auto-configure VPS settings for Docker mode
+	s.ConfigStore.SetConfig("jodo.host", "jodo")
+	s.ConfigStore.SetConfig("jodo.ssh_user", "root")
+
+	log.Println("[setup] SSH key installed in jodo container")
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

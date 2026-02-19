@@ -17,9 +17,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # Config
 # ============================================================
 
-KERNEL = os.environ.get("JODO_KERNEL_URL", "http://localhost:8080")
-BRAIN = os.environ.get("JODO_BRAIN_PATH", "/opt/jodo/brain")
-HEALTH_PORT = int(os.environ.get("JODO_HEALTH_PORT", "9001"))
+KERNEL = "__KERNEL_URL__"
+BRAIN = "__BRAIN_PATH__"
+HEALTH_PORT = __SEED_PORT__
 SLEEP_SECONDS = int(os.environ.get("JODO_SLEEP_SECONDS", "30"))
 
 # Session for kernel HTTP calls — bypasses system proxy for local/private traffic.
@@ -554,8 +554,6 @@ PLAN_INSTRUCTIONS = """__PROMPT_PLAN__"""
 
 
 def birth_prompt(genesis):
-    kernel = KERNEL
-    brain = BRAIN
     return f"""__PROMPT_BIRTH__"""
 
 
@@ -636,7 +634,6 @@ def gather_context():
 def wakeup_prompt(genesis, inbox_messages, chat_messages):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
-    kernel = KERNEL
     jodo_md = read_jodo_md()
     context = gather_context()
 

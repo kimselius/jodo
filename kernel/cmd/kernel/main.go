@@ -157,6 +157,7 @@ func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore
 		ConfigStore:   configStore,
 		Encryptor:     encryptor,
 		SetupComplete: true,
+		JodoMode:      envOr("JODO_MODE", "vps"),
 	}
 
 	router := server.SetupRouter()
@@ -213,6 +214,7 @@ func startSetupMode(database *sql.DB, dbCfg config.DatabaseConfig, configStore *
 		ConfigStore:   configStore,
 		Encryptor:     encryptor,
 		SetupComplete: false,
+		JodoMode:      envOr("JODO_MODE", "vps"),
 		// Subsystems are nil — operational routes will return 503
 	}
 

@@ -6,6 +6,7 @@ services:
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - JODO_DB_PASSWORD=${JODO_DB_PASSWORD}
+      - JODO_MODE=${JODO_MODE:-vps}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=jodo
@@ -14,6 +15,7 @@ services:
       - ./configs:/app/configs
       - ./seed:/app/seed
       - /var/log:/var/log
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - postgres
 
@@ -28,5 +30,16 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
 
+  jodo:
+    build: ./docker/jodo
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - jodo-brain:/opt/jodo/brain
+    profiles:
+      - docker-mode
+
 volumes:
   pgdata:
+  jodo-brain:

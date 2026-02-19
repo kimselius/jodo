@@ -9,6 +9,8 @@ import { api } from '@/lib/api'
 const props = defineProps<{
   vps: { host: string; sshUser: string }
   kernelUrl: string
+  brainPath: string
+  jodoMode: 'vps' | 'docker'
   providers: ProviderSetup[]
   genesis: GenesisSetup
   birthing: boolean
@@ -75,10 +77,16 @@ async function handleBirth() {
     </div>
 
     <Card class="p-4 space-y-3">
-      <h3 class="text-xs font-medium text-muted-foreground uppercase tracking-wider">VPS Connection</h3>
+      <h3 class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        {{ jodoMode === 'docker' ? 'Docker Connection' : 'VPS Connection' }}
+      </h3>
       <div class="text-sm">
         <span class="text-muted-foreground">Host:</span>
         <span class="ml-2 font-mono">{{ vps.sshUser }}@{{ vps.host }}</span>
+      </div>
+      <div class="text-sm">
+        <span class="text-muted-foreground">Brain Path:</span>
+        <span class="ml-2 font-mono">{{ brainPath }}</span>
       </div>
       <div class="text-sm">
         <span class="text-muted-foreground">Kernel URL:</span>
