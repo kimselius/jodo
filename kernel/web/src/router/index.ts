@@ -19,6 +19,16 @@ const router = createRouter({
       component: () => import('@/views/SettingsView.vue')
     },
     {
+      path: '/memories',
+      name: 'memories',
+      component: () => import('@/views/MemoriesView.vue')
+    },
+    {
+      path: '/growth',
+      name: 'growth',
+      component: () => import('@/views/GrowthView.vue')
+    },
+    {
       path: '/timeline',
       name: 'timeline',
       component: () => import('@/views/TimelineView.vue')

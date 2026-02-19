@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import type { ChatMessage } from '@/types/chat'
 import ChatMessageComp from './ChatMessage.vue'
 
@@ -10,6 +10,13 @@ const props = defineProps<{
 
 const container = ref<HTMLElement>()
 const isAtBottom = ref(true)
+
+// Show patience message when the last message is from the human
+const waitingForJodo = computed(() => {
+  if (props.messages.length === 0) return false
+  const last = props.messages[props.messages.length - 1]
+  return last.source === 'human'
+})
 
 function scrollToBottom() {
   if (container.value) {
@@ -73,6 +80,18 @@ onMounted(() => {
         :key="msg.id"
         :msg="msg"
       />
+
+      <!-- Patience message when waiting for Jodo -->
+      <div v-if="waitingForJodo" class="px-4">
+        <div class="flex items-start gap-2 max-w-[85%]">
+          <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 mt-0.5">
+            <span class="text-primary text-xs font-bold">J</span>
+          </div>
+          <p class="text-xs text-muted-foreground italic leading-relaxed pt-1">
+            Jodo will respond in the next galla. Please be patient.
+          </p>
+        </div>
+      </div>
     </div>
   </div>
 </template>

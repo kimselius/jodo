@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -71,4 +72,46 @@ func (s *Store) Count() (int, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&count)
 	return count, err
+}
+
+// MemoryEntry is a single stored memory (no embedding).
+type MemoryEntry struct {
+	ID        string   `json:"id"`
+	Content   string   `json:"content"`
+	Tags      []string `json:"tags"`
+	Source    string   `json:"source"`
+	CreatedAt string   `json:"created_at"`
+}
+
+// List returns recent memories, newest first.
+func (s *Store) List(limit, offset int) ([]MemoryEntry, error) {
+	if limit == 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, content, COALESCE(tags, '{}'), COALESCE(source, ''), created_at
+		 FROM memories ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []MemoryEntry
+	for rows.Next() {
+		var m MemoryEntry
+		var createdAt time.Time
+		if err := rows.Scan(&m.ID, &m.Content, pq.Array(&m.Tags), &m.Source, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan memory: %w", err)
+		}
+		m.CreatedAt = createdAt.Format(time.RFC3339)
+		entries = append(entries, m)
+	}
+
+	if entries == nil {
+		entries = []MemoryEntry{}
+	}
+	return entries, nil
 }

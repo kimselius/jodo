@@ -58,13 +58,28 @@ func (m *Manager) SetStatus(status string) {
 }
 
 // SetHealthResult updates the health check result.
+// On first success with unknown PID, discovers it via SSH.
 func (m *Manager) SetHealthResult(ok bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.status.LastHealthCheck = time.Now()
-	m.status.HealthCheckOK = ok
+	needsPID := ok && m.status.PID == 0
 	if ok {
 		m.status.Status = "running"
+		if m.status.UptimeStart.IsZero() {
+			m.status.UptimeStart = time.Now()
+		}
+	}
+	m.status.LastHealthCheck = time.Now()
+	m.status.HealthCheckOK = ok
+	m.mu.Unlock()
+
+	// Discover PID outside the lock (SSH is slow)
+	if needsPID {
+		if pid, err := m.GetPID(); err == nil && pid > 0 {
+			m.mu.Lock()
+			m.status.PID = pid
+			m.mu.Unlock()
+			log.Printf("[process] discovered Jodo PID: %d", pid)
+		}
 	}
 }
 

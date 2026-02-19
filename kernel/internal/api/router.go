@@ -67,6 +67,8 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.POST("/chat/ack", s.handleChatAck)
 		api.GET("/genesis/identity", s.handleGenesisIdentityGet)
 		api.PUT("/genesis/identity", s.handleGenesisIdentityPut)
+		api.GET("/memories", s.handleMemoriesList)
+		api.GET("/growth", s.handleGrowthLog)
 	}
 
 	return r

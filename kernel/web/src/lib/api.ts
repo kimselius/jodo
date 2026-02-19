@@ -2,6 +2,8 @@ import type { ChatMessage } from '@/types/chat'
 import type { StatusResponse, BudgetResponse } from '@/types/status'
 import type { Genesis, IdentityUpdate } from '@/types/genesis'
 import type { CommitEntry } from '@/types/history'
+import type { MemoryEntry } from '@/types/memory'
+import type { GrowthEvent } from '@/types/growth'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -60,6 +62,18 @@ export const api = {
   // History
   getHistory() {
     return request<{ commits: CommitEntry[] }>('/api/history')
+  },
+
+  // Memories
+  getMemories(limit = 50, offset = 0) {
+    return request<{ memories: MemoryEntry[]; total: number }>(
+      `/api/memories?limit=${limit}&offset=${offset}`
+    )
+  },
+
+  // Growth
+  getGrowth(limit = 50) {
+    return request<{ events: GrowthEvent[] }>(`/api/growth?limit=${limit}`)
   },
 
   // Lifecycle

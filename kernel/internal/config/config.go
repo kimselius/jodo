@@ -76,17 +76,17 @@ type RoutingConfig struct {
 
 type Genesis struct {
 	Identity struct {
-		Name    string `yaml:"name"`
-		Version int    `yaml:"version"`
-	} `yaml:"identity"`
-	Purpose           string   `yaml:"purpose"`
-	SurvivalInstincts []string `yaml:"survival_instincts"`
+		Name    string `yaml:"name" json:"name"`
+		Version int    `yaml:"version" json:"version"`
+	} `yaml:"identity" json:"identity"`
+	Purpose           string   `yaml:"purpose" json:"purpose"`
+	SurvivalInstincts []string `yaml:"survival_instincts" json:"survival_instincts"`
 	Capabilities      struct {
-		KernelAPI map[string]string `yaml:"kernel_api"`
-		Local     []string          `yaml:"local"`
-	} `yaml:"capabilities"`
-	FirstTasks []string `yaml:"first_tasks"`
-	Hints      []string `yaml:"hints"`
+		KernelAPI map[string]string `yaml:"kernel_api" json:"kernel_api"`
+		Local     []string          `yaml:"local" json:"local"`
+	} `yaml:"capabilities" json:"capabilities"`
+	FirstTasks []string `yaml:"first_tasks" json:"first_tasks"`
+	Hints      []string `yaml:"hints" json:"hints"`
 }
 
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
