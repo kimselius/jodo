@@ -82,6 +82,14 @@ EOF
   echo ""
 
   if [[ "$JODO_MODE" == "docker" ]]; then
+    # Generate SSH key pair for kernel <-> jodo container communication
+    info "Generating SSH key pair for Docker mode..."
+    mkdir -p "$SCRIPT_DIR/kernel/.ssh"
+    ssh-keygen -t ed25519 -f "$SCRIPT_DIR/kernel/.ssh/jodo_key" -N "" -q
+    chmod 600 "$SCRIPT_DIR/kernel/.ssh/jodo_key"
+    chmod 644 "$SCRIPT_DIR/kernel/.ssh/jodo_key.pub"
+    ok "SSH key pair generated at kernel/.ssh/"
+
     info "Building Jodo Docker image..."
     dc --profile docker-mode build jodo
     ok "Jodo container image built."

@@ -58,7 +58,7 @@ const setup = useSetup()
           :error="setup.error.value"
           @generate="setup.generateSSHKey()"
           @verify="setup.verifySSH()"
-          @install-docker-key="setup.installDockerKey()"
+          @verify-docker="setup.verifyDockerSSH()"
           @next="setup.nextStep()"
         />
 

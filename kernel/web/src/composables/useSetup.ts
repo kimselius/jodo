@@ -177,29 +177,19 @@ export function useSetup() {
   // Fetch on init
   fetchSetupStatus()
 
-  async function installDockerKey() {
-    vps.generating = true
+  async function verifyDockerSSH() {
+    vps.verifying = true
     error.value = null
     try {
-      // Generate key first
-      const genRes = await api.setupSSHGenerate()
-      vps.publicKey = genRes.public_key
-      // Install into container
-      const installRes = await api.setupDockerInstallKey()
-      if (!installRes.ok) {
-        error.value = installRes.error || 'Failed to install key in container'
-        return
-      }
-      // Auto-verify
-      const verifyRes = await api.setupSSHVerify('jodo', 'root')
-      vps.verified = verifyRes.connected
-      if (!verifyRes.connected) {
-        error.value = verifyRes.error || 'SSH verification to container failed'
+      const res = await api.setupSSHVerify('jodo', 'root')
+      vps.verified = res.connected
+      if (!res.connected) {
+        error.value = res.error || 'SSH connection to container failed'
       }
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Docker key install failed'
+      error.value = e instanceof Error ? e.message : 'Docker SSH verification failed'
     } finally {
-      vps.generating = false
+      vps.verifying = false
     }
   }
 
@@ -309,7 +299,7 @@ export function useSetup() {
     prevStep,
     generateSSHKey,
     verifySSH,
-    installDockerKey,
+    verifyDockerSSH,
     provisionServer,
     saveConfig,
     birth,

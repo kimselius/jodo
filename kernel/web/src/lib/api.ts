@@ -142,12 +142,6 @@ export const api = {
     })
   },
 
-  setupDockerInstallKey() {
-    return request<{ ok: boolean; error?: string }>('/api/setup/docker/install-key', {
-      method: 'POST',
-    })
-  },
-
   // Settings
   getSettingsProviders() {
     return request<{ providers: ProviderInfo[] }>('/api/settings/providers')

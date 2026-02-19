@@ -15,7 +15,7 @@ services:
       - ./configs:/app/configs
       - ./seed:/app/seed
       - /var/log:/var/log
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.ssh:/app/ssh:ro
     depends_on:
       - postgres
 
@@ -37,6 +37,7 @@ services:
       - "9001:9001"
     volumes:
       - jodo-brain:/opt/jodo/brain
+      - ./.ssh/jodo_key.pub:/root/.ssh/authorized_keys:ro
     profiles:
       - docker-mode
 
