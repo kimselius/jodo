@@ -6,6 +6,7 @@ import ProvidersTab from '@/components/settings/ProvidersTab.vue'
 import RoutingTab from '@/components/settings/RoutingTab.vue'
 import KernelTab from '@/components/settings/KernelTab.vue'
 import VPSTab from '@/components/settings/VPSTab.vue'
+import SubagentsTab from '@/components/settings/SubagentsTab.vue'
 
 const {
   providers,
@@ -13,6 +14,7 @@ const {
   routing,
   kernel,
   ssh,
+  subagent,
   loading,
   error,
   saved,
@@ -22,6 +24,7 @@ const {
   loadRouting,
   loadKernel,
   loadSSH,
+  loadSubagent,
   showSaved,
 } = useSettings()
 
@@ -32,6 +35,7 @@ const tabs = [
   { key: 'providers', label: 'Providers' },
   { key: 'routing', label: 'Routing' },
   { key: 'kernel', label: 'Kernel' },
+  { key: 'subagents', label: 'Subagents' },
   { key: 'vps', label: 'VPS' },
 ]
 
@@ -92,6 +96,7 @@ function handleSaved(reloadFn?: () => Promise<void>) {
         <RoutingTab
           v-if="activeTab === 'routing' && routing"
           :routing="routing"
+          :providers="providers"
           @saved="handleSaved(loadRouting)"
         />
 
@@ -99,6 +104,12 @@ function handleSaved(reloadFn?: () => Promise<void>) {
           v-if="activeTab === 'kernel' && kernel"
           :kernel="kernel"
           @saved="handleSaved(loadKernel)"
+        />
+
+        <SubagentsTab
+          v-if="activeTab === 'subagents' && subagent"
+          :subagent="subagent"
+          @saved="handleSaved(loadSubagent)"
         />
 
         <VPSTab

@@ -21,18 +21,21 @@ type Router struct {
 	configs   map[string]config.ProviderConfig
 	routing   config.RoutingConfig
 	budget    *BudgetTracker
+	busy      *BusyTracker
 }
 
-func NewRouter(providers map[string]Provider, configs map[string]config.ProviderConfig, routing config.RoutingConfig, budget *BudgetTracker) *Router {
+func NewRouter(providers map[string]Provider, configs map[string]config.ProviderConfig, routing config.RoutingConfig, budget *BudgetTracker, busy *BusyTracker) *Router {
 	return &Router{
 		providers: providers,
 		configs:   configs,
 		routing:   routing,
 		budget:    budget,
+		busy:      busy,
 	}
 }
 
 // Route picks the best provider for the given intent, budget, and tool requirements.
+// Supports both "model@provider" references and legacy "provider" references.
 func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteResult, error) {
 	preferences, ok := r.routing.IntentPreferences[intent]
 	if !ok {
@@ -42,7 +45,9 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 		}
 	}
 
-	for _, provName := range preferences {
+	for _, ref := range preferences {
+		modelKey, provName, isModelRef := config.ParseModelRef(ref)
+
 		provider, ok := r.providers[provName]
 		if !ok {
 			continue
@@ -58,12 +63,38 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 			continue
 		}
 
-		modelKey, modelCfg, found := r.bestModelForIntent(provCfg, intent, needsTools)
-		if !found {
+		var mk string
+		var mc config.ModelConfig
+		var found bool
+
+		if isModelRef {
+			// Direct model@provider reference — look up specific model
+			mc, found = provCfg.Models[modelKey]
+			if !found {
+				continue
+			}
+			mk = modelKey
+			// Verify capabilities
+			if !hasCapability(mc.Capabilities, intent) {
+				continue
+			}
+			if needsTools && !hasCapability(mc.Capabilities, "tools") {
+				continue
+			}
+		} else {
+			// Legacy provider-only reference — pick best model
+			mk, mc, found = r.bestModelForIntent(provCfg, intent, needsTools)
+			if !found {
+				continue
+			}
+		}
+
+		// Check busy status (skip if model is overloaded)
+		if r.busy != nil && r.busy.IsBusy(provName, mk) {
 			continue
 		}
 
-		estimated := EstimateCost(modelCfg, maxTokens)
+		estimated := EstimateCost(mc, maxTokens)
 		canAfford, _, err := r.budget.CanAfford(provName, estimated, intent)
 		if err != nil || !canAfford {
 			continue
@@ -72,9 +103,9 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 		return &RouteResult{
 			ProviderName: provName,
 			Provider:     provider,
-			Model:        modelCfg.ModelName(modelKey),
-			ModelKey:     modelKey,
-			ModelConfig:  modelCfg,
+			Model:        mc.ModelName(mk),
+			ModelKey:     mk,
+			ModelConfig:  mc,
 		}, nil
 	}
 
@@ -88,7 +119,9 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 		preferences = []string{"ollama", "openai"}
 	}
 
-	for _, provName := range preferences {
+	for _, ref := range preferences {
+		modelKey, provName, isModelRef := config.ParseModelRef(ref)
+
 		provider, ok := r.providers[provName]
 		if !ok || !provider.SupportsEmbed() {
 			continue
@@ -96,19 +129,38 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 
 		provCfg := r.configs[provName]
 
-		for modelKey, modelCfg := range provCfg.Models {
-			if !hasCapability(modelCfg.Capabilities, "embed") {
+		if isModelRef {
+			// Direct model@provider reference
+			mc, found := provCfg.Models[modelKey]
+			if !found || !hasCapability(mc.Capabilities, "embed") {
 				continue
 			}
-			canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(modelCfg, 100), "embed")
+			canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
 			if canAfford {
 				return &RouteResult{
 					ProviderName: provName,
 					Provider:     provider,
-					Model:        modelCfg.ModelName(modelKey),
+					Model:        mc.ModelName(modelKey),
 					ModelKey:     modelKey,
-					ModelConfig:  modelCfg,
+					ModelConfig:  mc,
 				}, nil
+			}
+		} else {
+			// Legacy: iterate models
+			for mk, mc := range provCfg.Models {
+				if !hasCapability(mc.Capabilities, "embed") {
+					continue
+				}
+				canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
+				if canAfford {
+					return &RouteResult{
+						ProviderName: provName,
+						Provider:     provider,
+						Model:        mc.ModelName(mk),
+						ModelKey:     mk,
+						ModelConfig:  mc,
+					}, nil
+				}
 			}
 		}
 	}

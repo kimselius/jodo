@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import Card from '@/components/ui/Card.vue'
 import Input from '@/components/ui/Input.vue'
 import Button from '@/components/ui/Button.vue'
+import ModelDiscovery from './ModelDiscovery.vue'
 import { api } from '@/lib/api'
 import type { ProviderInfo } from '@/types/setup'
 
@@ -54,6 +55,28 @@ async function testProvider(p: ProviderInfo) {
     testing.value = null
   }
 }
+
+function enabledModelsFor(p: ProviderInfo) {
+  return p.models.filter(m => m.enabled)
+}
+
+async function handleModelEnable(providerName: string, model: { model_key: string; model_name: string; input_cost_per_1m: number; output_cost_per_1m: number; capabilities: string[]; quality: number }) {
+  try {
+    await api.addModel(providerName, model)
+    emit('saved')
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to enable model'
+  }
+}
+
+async function handleModelDisable(providerName: string, modelKey: string) {
+  try {
+    await api.updateModel(providerName, modelKey, { enabled: false })
+    emit('saved')
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to disable model'
+  }
+}
 </script>
 
 <template>
@@ -100,23 +123,13 @@ async function testProvider(p: ProviderInfo) {
           </div>
         </template>
 
-        <!-- Models -->
-        <div>
-          <h4 class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Models</h4>
-          <div class="space-y-1">
-            <div
-              v-for="m in p.models"
-              :key="m.model_key"
-              class="text-xs bg-muted rounded px-2 py-1.5 flex items-center justify-between"
-            >
-              <span>
-                <span class="font-mono text-foreground">{{ m.model_key }}</span>
-                <span class="text-muted-foreground ml-1">({{ m.capabilities.join(', ') }})</span>
-              </span>
-              <span class="text-muted-foreground">q{{ m.quality }}</span>
-            </div>
-          </div>
-        </div>
+        <!-- Model Discovery -->
+        <ModelDiscovery
+          :provider-name="p.name"
+          :enabled-models="enabledModelsFor(p)"
+          @enable="(model) => handleModelEnable(p.name, model)"
+          @disable="(key) => handleModelDisable(p.name, key)"
+        />
 
         <div class="flex items-center gap-3">
           <Button

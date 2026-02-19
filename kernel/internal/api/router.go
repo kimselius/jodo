@@ -62,7 +62,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -93,7 +93,9 @@ func (s *Server) SetupRouter() *gin.Engine {
 		settings.GET("/providers", s.handleSettingsProvidersGet)
 		settings.PUT("/providers/:name", s.handleSettingsProviderPut)
 		settings.POST("/providers/:name/models", s.handleSettingsModelAdd)
+		settings.PUT("/providers/:name/models/:key", s.handleSettingsModelUpdate)
 		settings.DELETE("/providers/:name/models/:key", s.handleSettingsModelDelete)
+		settings.GET("/providers/:name/discover", s.handleSettingsProviderDiscover)
 		settings.GET("/genesis", s.handleSettingsGenesisGet)
 		settings.PUT("/genesis", s.handleSettingsGenesisPut)
 		settings.GET("/routing", s.handleSettingsRoutingGet)
@@ -103,6 +105,8 @@ func (s *Server) SetupRouter() *gin.Engine {
 		settings.GET("/ssh", s.handleSettingsSSHGet)
 		settings.POST("/ssh/generate", s.handleSetupSSHGenerate)
 		settings.POST("/ssh/verify", s.handleSetupSSHVerify)
+		settings.GET("/subagent", s.handleSettingsSubagentGet)
+		settings.PUT("/subagent", s.handleSettingsSubagentPut)
 	}
 
 	// Operational endpoints — require setup complete
@@ -112,6 +116,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		ops.POST("/memory/store", s.handleMemoryStore)
 		ops.POST("/memory/search", s.handleMemorySearch)
 		ops.GET("/budget", s.handleBudget)
+		ops.GET("/budget/breakdown", s.handleBudgetBreakdown)
 		ops.GET("/status", s.handleStatus)
 		ops.GET("/genesis", s.handleGenesis)
 		ops.POST("/commit", s.handleCommit)
@@ -131,6 +136,19 @@ func (s *Server) SetupRouter() *gin.Engine {
 		ops.GET("/galla", s.handleGallaGet)
 		ops.POST("/heartbeat", s.handleHeartbeat)
 		ops.GET("/ws", s.handleWS)
+
+		// Library
+		ops.GET("/library", s.handleLibraryList)
+		ops.POST("/library", s.handleLibraryCreate)
+		ops.GET("/library/:id", s.handleLibraryGet)
+		ops.PUT("/library/:id", s.handleLibraryUpdate)
+		ops.PATCH("/library/:id", s.handleLibraryPatch)
+		ops.DELETE("/library/:id", s.handleLibraryDelete)
+		ops.POST("/library/:id/comments", s.handleLibraryCommentPost)
+
+		// Inbox
+		ops.GET("/inbox", s.handleInboxList)
+		ops.POST("/inbox", s.handleInboxPost)
 	}
 
 	// Reverse proxy to Jodo's app — registered on the base router (not /api)

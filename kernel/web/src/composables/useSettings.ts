@@ -9,6 +9,7 @@ export function useSettings() {
   const routing = ref<RoutingConfig | null>(null)
   const kernel = ref<KernelSettings | null>(null)
   const ssh = ref<SSHStatus | null>(null)
+  const subagent = ref<{ max_concurrent: number; max_timeout: number } | null>(null)
   const loading = ref(false)
   const saving = ref(false)
   const error = ref<string | null>(null)
@@ -55,10 +56,18 @@ export function useSettings() {
     }
   }
 
+  async function loadSubagent() {
+    try {
+      subagent.value = await api.getSettingsSubagent()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load subagent settings'
+    }
+  }
+
   async function loadAll() {
     loading.value = true
     error.value = null
-    await Promise.all([loadProviders(), loadGenesis(), loadRouting(), loadKernel(), loadSSH()])
+    await Promise.all([loadProviders(), loadGenesis(), loadRouting(), loadKernel(), loadSSH(), loadSubagent()])
     loading.value = false
   }
 
@@ -73,6 +82,7 @@ export function useSettings() {
     routing,
     kernel,
     ssh,
+    subagent,
     loading,
     saving,
     error,
@@ -83,6 +93,7 @@ export function useSettings() {
     loadRouting,
     loadKernel,
     loadSSH,
+    loadSubagent,
     showSaved,
   }
 }

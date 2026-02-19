@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import Card from '@/components/ui/Card.vue'
 import Input from '@/components/ui/Input.vue'
 import Button from '@/components/ui/Button.vue'
+import ModelDiscovery from '@/components/settings/ModelDiscovery.vue'
 import { api } from '@/lib/api'
 import type { ProviderSetup } from '@/types/setup'
 
@@ -35,6 +36,20 @@ async function testProvider(provider: ProviderSetup) {
 
 function hasAtLeastOneProvider(): boolean {
   return props.providers.some(p => p.enabled)
+}
+
+function handleModelEnable(provider: ProviderSetup, model: { model_key: string; model_name: string; input_cost_per_1m: number; output_cost_per_1m: number; capabilities: string[]; quality: number }) {
+  const exists = provider.models.find(m => m.model_key === model.model_key)
+  if (!exists) {
+    provider.models.push({ ...model })
+  }
+}
+
+function handleModelDisable(provider: ProviderSetup, modelKey: string) {
+  const idx = provider.models.findIndex(m => m.model_key === modelKey)
+  if (idx >= 0) {
+    provider.models.splice(idx, 1)
+  }
 }
 </script>
 
@@ -107,24 +122,13 @@ function hasAtLeastOneProvider(): boolean {
           </span>
         </div>
 
-        <!-- Models (collapsed by default) -->
-        <details class="group">
-          <summary class="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-            {{ provider.models.length }} model{{ provider.models.length !== 1 ? 's' : '' }} configured
-          </summary>
-          <div class="mt-3 space-y-2">
-            <div
-              v-for="model in provider.models"
-              :key="model.model_key"
-              class="text-xs text-muted-foreground bg-muted rounded-md p-2 font-mono"
-            >
-              <span class="text-foreground">{{ model.model_key }}</span>
-              <span class="mx-1">&rarr;</span>
-              {{ model.model_name }}
-              <span class="ml-2 text-muted-foreground">({{ model.capabilities.join(', ') }})</span>
-            </div>
-          </div>
-        </details>
+        <!-- Model Discovery -->
+        <ModelDiscovery
+          :provider-name="provider.name"
+          :enabled-models="provider.models"
+          @enable="(model) => handleModelEnable(provider, model)"
+          @disable="(key) => handleModelDisable(provider, key)"
+        />
       </template>
     </Card>
 

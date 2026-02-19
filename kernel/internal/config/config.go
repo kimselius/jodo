@@ -27,13 +27,15 @@ type KernelConfig struct {
 }
 
 type JodoConfig struct {
-	Host           string `yaml:"host"`
-	SSHUser        string `yaml:"ssh_user"`
-	SSHKeyPath     string `yaml:"ssh_key_path"`
-	Port           int    `yaml:"port"`    // seed.py health port (9001)
-	AppPort        int    `yaml:"app_port"` // Jodo's app port (9000)
-	BrainPath      string `yaml:"brain_path"`
-	HealthEndpoint string `yaml:"health_endpoint"`
+	Host            string `yaml:"host"`
+	SSHUser         string `yaml:"ssh_user"`
+	SSHKeyPath      string `yaml:"ssh_key_path"`
+	Port            int    `yaml:"port"`    // seed.py health port (9001)
+	AppPort         int    `yaml:"app_port"` // Jodo's app port (9000)
+	BrainPath       string `yaml:"brain_path"`
+	HealthEndpoint  string `yaml:"health_endpoint"`
+	MaxSubagents    int    `yaml:"max_subagents"`
+	SubagentTimeout int    `yaml:"subagent_timeout"`
 }
 
 type DatabaseConfig struct {
@@ -87,6 +89,17 @@ type Genesis struct {
 	} `yaml:"capabilities" json:"capabilities"`
 	FirstTasks []string `yaml:"first_tasks" json:"first_tasks"`
 	Hints      []string `yaml:"hints" json:"hints"`
+}
+
+// ParseModelRef parses a "modelKey@provider" reference string.
+// Returns modelKey, providerName, ok. If no "@", treats the whole string as provider name (backward compat).
+func ParseModelRef(ref string) (modelKey, providerName string, ok bool) {
+	parts := strings.SplitN(ref, "@", 2)
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0], parts[1], true
+	}
+	// Backward compatible: treat as provider name
+	return "", ref, false
 }
 
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)

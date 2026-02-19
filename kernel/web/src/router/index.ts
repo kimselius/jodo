@@ -38,6 +38,11 @@ const router = createRouter({
       component: () => import('@/views/MemoriesView.vue'),
     },
     {
+      path: '/library',
+      name: 'library',
+      component: () => import('@/views/LibraryView.vue'),
+    },
+    {
       path: '/growth',
       name: 'growth',
       component: () => import('@/views/GrowthView.vue'),
@@ -46,6 +51,11 @@ const router = createRouter({
       path: '/logs',
       name: 'logs',
       component: () => import('@/views/LogView.vue'),
+    },
+    {
+      path: '/inbox',
+      name: 'inbox',
+      component: () => import('@/views/InboxView.vue'),
     },
     {
       path: '/timeline',

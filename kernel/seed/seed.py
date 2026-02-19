@@ -8,10 +8,12 @@ That's all you need to be alive.
 import os
 import json
 import subprocess
+import multiprocessing
 import threading
 import time
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from dataclasses import dataclass, field
 
 # ============================================================
 # Config
@@ -21,6 +23,8 @@ KERNEL = "__KERNEL_URL__"
 BRAIN = "__BRAIN_PATH__"
 HEALTH_PORT = __SEED_PORT__
 SLEEP_SECONDS = int(os.environ.get("JODO_SLEEP_SECONDS", "30"))
+MAX_SUBAGENTS = int(os.environ.get("JODO_MAX_SUBAGENTS", "__MAX_SUBAGENTS__"))
+SUBAGENT_TIMEOUT = int(os.environ.get("JODO_SUBAGENT_TIMEOUT", "__SUBAGENT_TIMEOUT__"))
 
 # Session for kernel HTTP calls — bypasses system proxy for local/private traffic.
 # Shell commands (tool_execute) still inherit the system proxy normally.
@@ -41,6 +45,22 @@ _phase = "booting"  # booting, thinking, sleeping
 # Max time before health reports unhealthy (sleep + think timeout + buffer)
 _HEARTBEAT_MAX = SLEEP_SECONDS + 600 + 60
 
+# Subagent tracking
+@dataclass
+class AgentInfo:
+    task_id: str
+    prompt: str
+    intent: str
+    timeout: int
+    process: multiprocessing.Process = None
+    pid: int = 0
+    start_time: float = 0.0
+    status: str = "pending"  # pending, running, completed, failed, timed_out
+    result: str = ""
+
+_agents = {}           # task_id → AgentInfo
+_agents_lock = threading.Lock()
+
 # ============================================================
 # Health endpoint (runs in background thread)
 # The kernel pings this to know we're alive.
@@ -54,12 +74,15 @@ class SeedHandler(BaseHTTPRequestHandler):
             healthy = alive and not stale
             status = "ok" if healthy else "unhealthy"
             code = 200 if healthy else 503
+            with _agents_lock:
+                active = sum(1 for a in _agents.values() if a.status == "running")
             body = json.dumps({
                 "status": status,
                 "galla": galla,
                 "alive": alive,
                 "phase": _phase,
                 "heartbeat_age": int(time.time() - _heartbeat),
+                "active_agents": active,
             }).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
@@ -250,6 +273,32 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "spawn_agent",
+        "description": "Spawn a subagent to work on a task in parallel. The subagent gets read, write, and execute tools (no restart, no spawning). It runs independently and posts results to your inbox when done. Use for execution-heavy tasks you want to delegate.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Unique identifier for this task (e.g. 'fix-css', 'add-tests')",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Full instructions for the subagent. Be specific — it has no context beyond what you tell it.",
+                },
+                "intent": {
+                    "type": "string",
+                    "description": "LLM routing intent: 'code', 'chat', 'embed'. Default: 'code'",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": f"Max seconds before the agent is killed. Default: {SUBAGENT_TIMEOUT}",
+                },
+            },
+            "required": ["task_id", "prompt"],
+        },
+    },
 ]
 
 def _safe_tool(name, args, required, fn):
@@ -270,7 +319,213 @@ TOOL_EXECUTORS = {
     "write": lambda args: _safe_tool("write", args, ["path", "content"], lambda a: tool_write(a["path"], a["content"])),
     "execute": lambda args: _safe_tool("execute", args, ["command"], lambda a: tool_execute(a["command"])),
     "restart": lambda args: tool_restart(),
+    "spawn_agent": lambda args: tool_spawn_agent(args),
 }
+
+# Subagent tools — read, write, execute only (no restart, no spawn)
+SUBAGENT_TOOLS = [t for t in TOOLS if t["name"] in ("read", "write", "execute")]
+
+SUBAGENT_EXECUTORS = {
+    "read": TOOL_EXECUTORS["read"],
+    "write": TOOL_EXECUTORS["write"],
+    "execute": TOOL_EXECUTORS["execute"],
+}
+
+
+# ============================================================
+# Subagent system
+# ============================================================
+
+def subagent_runner(task_id, prompt, intent, timeout_secs):
+    """Run a subagent in a child process. Communicates results via inbox POST."""
+    import requests as req_lib
+    session = req_lib.Session()
+    session.proxies = {"http": None, "https": None}
+
+    def agent_think(messages, system=None):
+        payload = {
+            "intent": intent,
+            "messages": messages,
+            "tools": SUBAGENT_TOOLS,
+            "max_tokens": 8000,
+            "requested_by": f"subagent:{task_id}",
+        }
+        if system:
+            payload["system"] = system
+        try:
+            resp = session.post(f"{KERNEL}/api/think", json=payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            return None
+
+    def agent_log(msg):
+        line = f"[subagent:{task_id}] {msg}"
+        print(line, flush=True)
+        try:
+            session.post(
+                f"{KERNEL}/api/log",
+                json={"event": "subagent_log", "message": line, "galla": 0},
+                timeout=2,
+            )
+        except Exception:
+            pass
+
+    system = f"You are a subagent working on task '{task_id}'. Complete the task and provide a summary of what you did."
+    messages = [{"role": "user", "content": prompt}]
+    actions = []
+    max_loops = 30
+
+    agent_log(f"started (intent={intent}, timeout={timeout_secs}s)")
+
+    for i in range(max_loops):
+        response = agent_think(messages, system=system)
+        if response is None:
+            agent_log("think call failed, aborting")
+            break
+
+        content = response.get("content", "")
+        tool_calls = response.get("tool_calls", [])
+        done = response.get("done", True)
+
+        if not tool_calls or done:
+            # Post result to main Jodo's inbox
+            result_msg = content or "(no output)"
+            try:
+                session.post(
+                    f"http://localhost:{HEALTH_PORT}/inbox",
+                    json={"source": f"subagent:{task_id}", "message": result_msg[:2000]},
+                    timeout=5,
+                )
+            except Exception:
+                pass
+            agent_log(f"completed after {i+1} iterations, {len(actions)} actions")
+            return
+
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls,
+        })
+
+        for tc in tool_calls:
+            name = tc["name"]
+            args = tc["arguments"]
+            tc_id = tc["id"]
+
+            agent_log(f"  tool: {name}({json.dumps(args)[:80]})")
+
+            executor = SUBAGENT_EXECUTORS.get(name)
+            if executor:
+                result = executor(args)
+                is_error = isinstance(result, str) and result.startswith("ERROR:")
+            else:
+                result = f"ERROR: Unknown tool: {name}"
+                is_error = True
+
+            actions.append({"tool": name, "args": args})
+
+            messages.append({
+                "role": "tool_result",
+                "tool_call_id": tc_id,
+                "content": result if isinstance(result, str) else str(result),
+                "is_error": is_error,
+            })
+
+    # Hit loop limit
+    try:
+        session.post(
+            f"http://localhost:{HEALTH_PORT}/inbox",
+            json={"source": f"subagent:{task_id}", "message": f"Hit tool loop limit ({max_loops} iterations). Partial work done."},
+            timeout=5,
+        )
+    except Exception:
+        pass
+    agent_log(f"hit loop limit after {len(actions)} actions")
+
+
+def tool_spawn_agent(args):
+    """Spawn a subagent to work on a task."""
+    task_id = args.get("task_id", "")
+    prompt = args.get("prompt", "")
+    intent = args.get("intent", "code")
+    timeout = args.get("timeout", SUBAGENT_TIMEOUT)
+
+    if not task_id or not prompt:
+        return "ERROR: task_id and prompt are required"
+
+    with _agents_lock:
+        # Check unique task_id
+        if task_id in _agents and _agents[task_id].status == "running":
+            return f"ERROR: agent '{task_id}' is already running"
+
+        # Check concurrent limit
+        running = sum(1 for a in _agents.values() if a.status == "running")
+        if running >= MAX_SUBAGENTS:
+            return f"ERROR: max concurrent subagents ({MAX_SUBAGENTS}) reached. Wait for one to finish."
+
+        # Spawn process
+        p = multiprocessing.Process(
+            target=subagent_runner,
+            args=(task_id, prompt, intent, timeout),
+            daemon=True,
+        )
+        p.start()
+
+        agent = AgentInfo(
+            task_id=task_id,
+            prompt=prompt[:200],
+            intent=intent,
+            timeout=timeout,
+            process=p,
+            pid=p.pid,
+            start_time=time.time(),
+            status="running",
+        )
+        _agents[task_id] = agent
+
+    log(f"Spawned subagent '{task_id}' (PID {p.pid}, intent={intent}, timeout={timeout}s)")
+    return f"OK: Subagent '{task_id}' spawned (PID {p.pid}). Results will appear in your inbox."
+
+
+def check_agents():
+    """Check on all tracked agents. Returns a status summary string."""
+    lines = []
+    with _agents_lock:
+        for tid, agent in list(_agents.items()):
+            if agent.status == "running":
+                elapsed = time.time() - agent.start_time
+                if not agent.process.is_alive():
+                    # Process finished
+                    agent.status = "completed"
+                    agent.process.join(timeout=1)
+                    lines.append(f"  [{tid}] completed (ran {int(elapsed)}s)")
+                elif elapsed > agent.timeout:
+                    # Timed out — kill it
+                    agent.process.terminate()
+                    agent.process.join(timeout=5)
+                    agent.status = "timed_out"
+                    log(f"Subagent '{tid}' timed out after {int(elapsed)}s — terminated")
+                    lines.append(f"  [{tid}] TIMED OUT after {int(elapsed)}s")
+                else:
+                    lines.append(f"  [{tid}] running ({int(elapsed)}s / {agent.timeout}s)")
+            elif agent.status in ("completed", "failed", "timed_out"):
+                lines.append(f"  [{tid}] {agent.status}")
+
+    if not lines:
+        return "(no subagents)"
+    return "\n".join(lines)
+
+
+def cleanup_agents():
+    """Terminate all running subagents."""
+    with _agents_lock:
+        for tid, agent in _agents.items():
+            if agent.status == "running" and agent.process and agent.process.is_alive():
+                agent.process.terminate()
+                agent.process.join(timeout=5)
+                agent.status = "failed"
+                log(f"Cleaned up subagent '{tid}'")
 
 
 # ============================================================
@@ -327,10 +582,12 @@ def set_phase(phase):
     """Update phase locally and push to kernel for real-time UI."""
     global _phase
     _phase = phase
+    with _agents_lock:
+        active = sum(1 for a in _agents.values() if a.status == "running")
     try:
         kernel_http.post(
             f"{KERNEL}/api/heartbeat",
-            json={"phase": phase, "galla": galla},
+            json={"phase": phase, "galla": galla, "active_agents": active},
             timeout=2,
         )
     except Exception:
@@ -401,9 +658,9 @@ def get_budget():
 
 
 def get_unread_chat_messages():
-    """Fetch unread chat messages from kernel."""
+    """Fetch unread human chat messages from kernel."""
     try:
-        resp = kernel_http.get(f"{KERNEL}/api/chat", params={"unread": "true"}, timeout=10)
+        resp = kernel_http.get(f"{KERNEL}/api/chat", params={"unread": "true", "source": "human"}, timeout=10)
         data = resp.json()
         return data.get("messages", [])
     except Exception as e:
@@ -433,6 +690,40 @@ def post_chat_reply(message, galla_num):
         )
     except Exception as e:
         log(f"Chat reply failed: {e}")
+
+
+def get_library():
+    """Fetch library items from kernel."""
+    try:
+        resp = kernel_http.get(f"{KERNEL}/api/library", timeout=10)
+        return resp.json().get("items", [])
+    except Exception as e:
+        log(f"Library fetch failed: {e}")
+        return []
+
+
+def update_library_status(item_id, status):
+    """Update a library item's status."""
+    try:
+        kernel_http.patch(
+            f"{KERNEL}/api/library/{item_id}",
+            json={"status": status},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Library status update failed: {e}")
+
+
+def comment_library(item_id, message):
+    """Add a comment to a library item."""
+    try:
+        kernel_http.post(
+            f"{KERNEL}/api/library/{item_id}/comments",
+            json={"source": "jodo", "message": message},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Library comment failed: {e}")
 
 
 def load_galla():
@@ -664,16 +955,44 @@ def gather_context():
     return "\n\n".join(sections)
 
 
+def format_library(items):
+    """Format library items for the wakeup prompt."""
+    if not items:
+        return "(no briefs)"
+    lines = []
+    for item in items:
+        comments = f" ({len(item.get('comments', []))} comments)" if item.get("comments") else ""
+        lines.append(f"  [{item['status']}] #{item['id']} {item['title']}{comments}")
+    return "\n".join(lines)
+
+
 def wakeup_prompt(genesis, inbox_messages, chat_messages):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
     jodo_md = read_jodo_md()
     context = gather_context()
+    library_items = get_library()
+    library = format_library(library_items)
+    subagent_status = check_agents()
 
-    if inbox_messages:
-        inbox = "\n".join(f"[{m['source']}] {m['message']}" for m in inbox_messages)
+    # Separate subagent results from system inbox
+    agent_results = []
+    system_msgs = []
+    for m in inbox_messages:
+        if m.get("source", "").startswith("subagent:"):
+            agent_results.append(m)
+        else:
+            system_msgs.append(m)
+
+    if system_msgs:
+        inbox = "\n".join(f"[{m['source']}] {m['message']}" for m in system_msgs)
     else:
         inbox = "(no system messages)"
+
+    if agent_results:
+        inbox += "\n\nSUBAGENT RESULTS:\n" + "\n".join(
+            f"[{m['source']}] {m['message']}" for m in agent_results
+        )
 
     if chat_messages:
         chat = "\n".join(
@@ -841,8 +1160,10 @@ if __name__ == "__main__":
         live()
     except KeyboardInterrupt:
         log("Interrupted.")
+        cleanup_agents()
     except Exception as e:
         alive = False
+        cleanup_agents()
         log(f"Fatal: {e}")
         import traceback
         traceback.print_exc()

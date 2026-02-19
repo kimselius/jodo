@@ -165,6 +165,35 @@ func RunMigrations(db *sql.DB) error {
 			hints              TEXT[] DEFAULT '{}',
 			updated_at         TIMESTAMPTZ DEFAULT NOW()
 		)`,
+
+		// Library system
+		`CREATE TABLE IF NOT EXISTS library_items (
+			id         SERIAL PRIMARY KEY,
+			title      VARCHAR(255) NOT NULL,
+			content    TEXT NOT NULL DEFAULT '',
+			status     VARCHAR(50) NOT NULL DEFAULT 'new',
+			priority   INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS library_comments (
+			id         SERIAL PRIMARY KEY,
+			item_id    INTEGER NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+			source     VARCHAR(50) NOT NULL,
+			message    TEXT NOT NULL,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		// Inbox/intercom (kernel ↔ Jodo ↔ subagent communications)
+		`CREATE TABLE IF NOT EXISTS inbox_messages (
+			id         SERIAL PRIMARY KEY,
+			source     VARCHAR(100) NOT NULL,
+			target     VARCHAR(100) NOT NULL DEFAULT 'jodo',
+			message    TEXT NOT NULL,
+			galla      INTEGER,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -193,6 +222,16 @@ func RunMigrations(db *sql.DB) error {
 		`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'chat_messages_created_idx') THEN
 				CREATE INDEX chat_messages_created_idx ON chat_messages (created_at);
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'library_comments_item_idx') THEN
+				CREATE INDEX library_comments_item_idx ON library_comments (item_id);
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'inbox_messages_created_idx') THEN
+				CREATE INDEX inbox_messages_created_idx ON inbox_messages (created_at);
 			END IF;
 		END $$`,
 	}

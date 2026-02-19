@@ -32,6 +32,7 @@ type JodoStatus struct {
 	PID             int       `json:"pid"`
 	Galla           int       `json:"galla"`
 	Phase           string    `json:"phase"` // booting, thinking, sleeping
+	ActiveAgents    int       `json:"active_agents"`
 	UptimeStart     time.Time `json:"-"`
 	LastHealthCheck time.Time `json:"last_health_check"`
 	HealthCheckOK   bool      `json:"health_check_ok"`
@@ -94,6 +95,13 @@ func (m *Manager) SetHeartbeat(galla int, phase string) {
 	defer m.mu.Unlock()
 	m.status.Galla = galla
 	m.status.Phase = phase
+}
+
+// SetActiveAgents updates the active subagent count from seed.py's heartbeat.
+func (m *Manager) SetActiveAgents(count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.status.ActiveAgents = count
 }
 
 // IncrementRestarts increments today's restart counter.
@@ -224,8 +232,18 @@ func (m *Manager) StartSeed(seedPath string) error {
 	seedData = bytes.ReplaceAll(seedData, []byte("__BRAIN_PATH__"), []byte(m.cfg.BrainPath))
 	seedData = bytes.ReplaceAll(seedData, []byte("__SEED_PORT__"), []byte(strconv.Itoa(m.cfg.Port)))
 	seedData = bytes.ReplaceAll(seedData, []byte("__APP_PORT__"), []byte(strconv.Itoa(m.cfg.AppPort)))
-	log.Printf("[process] replaced config markers (kernel=%s, brain=%s, seed_port=%d, app_port=%d)",
-		m.kernelURL, m.cfg.BrainPath, m.cfg.Port, m.cfg.AppPort)
+	maxSub := m.cfg.MaxSubagents
+	if maxSub == 0 {
+		maxSub = 3
+	}
+	subTimeout := m.cfg.SubagentTimeout
+	if subTimeout == 0 {
+		subTimeout = 300
+	}
+	seedData = bytes.ReplaceAll(seedData, []byte("__MAX_SUBAGENTS__"), []byte(strconv.Itoa(maxSub)))
+	seedData = bytes.ReplaceAll(seedData, []byte("__SUBAGENT_TIMEOUT__"), []byte(strconv.Itoa(subTimeout)))
+	log.Printf("[process] replaced config markers (kernel=%s, brain=%s, seed_port=%d, app_port=%d, max_subagents=%d)",
+		m.kernelURL, m.cfg.BrainPath, m.cfg.Port, m.cfg.AppPort, maxSub)
 
 	// Write seed.py via SSH (using heredoc)
 	writeCmd := fmt.Sprintf(

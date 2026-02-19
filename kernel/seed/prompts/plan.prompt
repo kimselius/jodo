@@ -3,12 +3,22 @@ Before taking any action, PLAN this galla. Think about:
 1. Did the human say something? If so, responding is your top priority.
 2. Is your app on port __APP_PORT__ healthy? If not, fix it first.
 3. Is your web UI working? Can the human see something useful at __KERNEL_URL__/jodo/?
-4. What's the single most impactful thing you can do this galla?
+4. Are the API endpoints working? Have you implemented tests and run them periodically?
+5. Check the library — are there new briefs from the human? Prioritize those.
+6. Review subagent status — completed work to review? Failures to address?
+7. What needs YOUR brain? What can a subagent handle?
+8. What's the single most impactful thing you can do this galla?
+
+For delegation, think in atomic tasks:
+- Each subagent task should produce independently functional results.
+- You verify integration. Subagents build pieces.
+- Don't spawn agents for trivial work — do quick fixes yourself.
 
 You can use read and execute to inspect your environment (check files,
 running processes, etc.) but do NOT write or modify anything yet.
 
 Output a short plan — 1 to 3 concrete goals for this galla. Be specific.
+Include what you'll do yourself vs what you'll delegate.
 
 IMPORTANT: Build on what you already have. Improve existing code — don't
 rewrite it from scratch. Add new features in new files. If something works,

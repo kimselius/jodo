@@ -19,6 +19,7 @@ import (
 type Proxy struct {
 	Router  *Router
 	Budget  *BudgetTracker
+	Busy    *BusyTracker
 	Chains  *ChainTracker
 	Audit   *audit.Logger
 	client  *http.Client
@@ -47,11 +48,20 @@ func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, rout
 	}
 
 	budget := NewBudgetTracker(db, providerConfigs)
-	router := NewRouter(providers, providerConfigs, routing, budget)
+
+	// Build provider type map for busy tracking
+	providerTypes := make(map[string]string)
+	for name := range providerConfigs {
+		providerTypes[name] = name // provider name is the type (ollama, claude, openai)
+	}
+	busy := NewBusyTracker(providerTypes)
+
+	router := NewRouter(providers, providerConfigs, routing, budget, busy)
 
 	return &Proxy{
 		Router:  router,
 		Budget:  budget,
+		Busy:    busy,
 		Chains:  NewChainTracker(),
 		client:  &http.Client{Timeout: 120 * time.Second},
 		configs: providerConfigs,
@@ -116,6 +126,14 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 				MaxCost:    req.MaxCost,
 			},
 		})
+	}
+
+	// Acquire busy slot (prevents overloading local models)
+	if p.Busy != nil {
+		if !p.Busy.Acquire(route.ProviderName, route.ModelKey) {
+			return nil, fmt.Errorf("model %s/%s is busy", route.ProviderName, route.ModelKey)
+		}
+		defer p.Busy.Release(route.ProviderName, route.ModelKey)
 	}
 
 	// Build provider-specific HTTP request
@@ -228,10 +246,18 @@ func (p *Proxy) Reconfigure(providerConfigs map[string]config.ProviderConfig, ro
 	}
 
 	budget := NewBudgetTracker(p.Budget.db, providerConfigs)
-	router := NewRouter(providers, providerConfigs, routing, budget)
+
+	providerTypes := make(map[string]string)
+	for name := range providerConfigs {
+		providerTypes[name] = name
+	}
+	busy := NewBusyTracker(providerTypes)
+
+	router := NewRouter(providers, providerConfigs, routing, budget, busy)
 
 	p.Router = router
 	p.Budget = budget
+	p.Busy = busy
 	p.configs = providerConfigs
 
 	log.Printf("[llm] reconfigured with %d providers", len(providers))

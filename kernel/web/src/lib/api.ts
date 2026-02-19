@@ -4,6 +4,7 @@ import type { Genesis, IdentityUpdate } from '@/types/genesis'
 import type { CommitEntry } from '@/types/history'
 import type { MemoryEntry } from '@/types/memory'
 import type { GrowthEvent, GallaEntry } from '@/types/growth'
+import type { LibraryItem, LibraryComment } from '@/types/library'
 import type {
   SetupStatus, SSHGenerateResponse, SSHVerifyResponse,
   TestProviderResponse, ProviderSetup, GenesisSetup,
@@ -51,6 +52,10 @@ export const api = {
 
   getBudget() {
     return request<BudgetResponse>('/api/budget')
+  },
+
+  getBudgetBreakdown() {
+    return request<{ breakdown: Array<{ provider: string; model: string; intent: string; calls: number; tokens_in: number; tokens_out: number; cost: number }> }>('/api/budget/breakdown')
   },
 
   // Genesis
@@ -165,10 +170,21 @@ export const api = {
     })
   },
 
+  updateModel(providerName: string, modelKey: string, update: Record<string, unknown>) {
+    return request<{ ok: boolean }>(`/api/settings/providers/${providerName}/models/${modelKey}`, {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    })
+  },
+
   deleteModel(providerName: string, modelKey: string) {
     return request<{ ok: boolean }>(`/api/settings/providers/${providerName}/models/${modelKey}`, {
       method: 'DELETE',
     })
+  },
+
+  discoverModels(providerName: string) {
+    return request<{ models: unknown[]; error?: string }>(`/api/settings/providers/${providerName}/discover`)
   },
 
   getSettingsGenesis() {
@@ -206,5 +222,61 @@ export const api = {
 
   getSettingsSSH() {
     return request<SSHStatus>('/api/settings/ssh')
+  },
+
+  getSettingsSubagent() {
+    return request<{ max_concurrent: number; max_timeout: number }>('/api/settings/subagent')
+  },
+
+  updateSettingsSubagent(settings: { max_concurrent?: number; max_timeout?: number }) {
+    return request<{ ok: boolean }>('/api/settings/subagent', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  },
+
+  // Library
+  getLibrary(status?: string) {
+    const qs = status ? `?status=${status}` : ''
+    return request<{ items: LibraryItem[] }>(`/api/library${qs}`)
+  },
+
+  createLibraryItem(title: string, content: string, priority = 0) {
+    return request<{ ok: boolean; item: LibraryItem }>('/api/library', {
+      method: 'POST',
+      body: JSON.stringify({ title, content, priority }),
+    })
+  },
+
+  updateLibraryItem(id: number, update: { title?: string; content?: string; priority?: number }) {
+    return request<{ ok: boolean }>(`/api/library/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    })
+  },
+
+  patchLibraryStatus(id: number, status: string) {
+    return request<{ ok: boolean }>(`/api/library/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+  },
+
+  deleteLibraryItem(id: number) {
+    return request<{ ok: boolean }>(`/api/library/${id}`, { method: 'DELETE' })
+  },
+
+  addLibraryComment(id: number, message: string) {
+    return request<{ ok: boolean; comment: LibraryComment }>(`/api/library/${id}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ source: 'human', message }),
+    })
+  },
+
+  // Inbox
+  getInbox(limit = 200) {
+    return request<{ messages: Array<{ id: number; source: string; target: string; message: string; galla?: number; created_at: string }> }>(
+      `/api/inbox?limit=${limit}`
+    )
   },
 }

@@ -7,6 +7,8 @@ const eventToRoute: Record<string, string> = {
   chat: '/',
   memory: '/memories',
   timeline: '/timeline',
+  library: '/library',
+  inbox: '/inbox',
 }
 
 // Reactive badge counts — keyed by route path
@@ -16,6 +18,8 @@ const badges = reactive<Record<string, number>>({
   '/growth': 0,
   '/logs': 0,
   '/timeline': 0,
+  '/library': 0,
+  '/inbox': 0,
 })
 
 // Track whether the module has been initialized

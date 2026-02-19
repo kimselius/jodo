@@ -128,6 +128,29 @@ func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inp
 	return err
 }
 
+// GetModel returns a single model's info.
+func (s *DBStore) GetModel(providerName, modelKey string) (*ModelInfo, error) {
+	var m ModelInfo
+	err := s.db.QueryRow(
+		`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled
+		 FROM provider_models WHERE provider_name = $1 AND model_key = $2`,
+		providerName, modelKey,
+	).Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// SetModelEnabled toggles a model's enabled status.
+func (s *DBStore) SetModelEnabled(providerName, modelKey string, enabled bool) error {
+	_, err := s.db.Exec(
+		`UPDATE provider_models SET enabled = $3 WHERE provider_name = $1 AND model_key = $2`,
+		providerName, modelKey, enabled,
+	)
+	return err
+}
+
 // DeleteModel removes a specific model from a provider.
 func (s *DBStore) DeleteModel(providerName, modelKey string) error {
 	_, err := s.db.Exec(
@@ -223,6 +246,8 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 	if cfg.Jodo.HealthEndpoint == "" {
 		cfg.Jodo.HealthEndpoint = "/health"
 	}
+	cfg.Jodo.MaxSubagents = s.GetConfigInt("jodo.max_subagents", 3)
+	cfg.Jodo.SubagentTimeout = s.GetConfigInt("jodo.subagent_timeout", 300)
 
 	// Providers
 	cfg.Providers = make(map[string]ProviderConfig)

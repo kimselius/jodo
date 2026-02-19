@@ -17,11 +17,14 @@ const jodoStatus = computed(() => status.value?.jodo?.status || 'unknown')
 const wsPhase = ref(status.value?.jodo?.phase || '')
 const wsGalla = ref(status.value?.jodo?.galla ?? 0)
 
+const wsActiveAgents = ref(0)
+
 const unsub = onWSEvent((event) => {
   if (event.type === 'heartbeat') {
-    const data = event.data as { phase: string; galla: number }
+    const data = event.data as { phase: string; galla: number; active_agents?: number }
     wsPhase.value = data.phase
     wsGalla.value = data.galla
+    wsActiveAgents.value = data.active_agents || 0
   }
 })
 onUnmounted(unsub)
@@ -46,9 +49,11 @@ const activityLabel = computed(() => {
   if (s === 'unhealthy') return 'Unhealthy'
   const phase = wsPhase.value || status.value?.jodo?.phase || ''
   const galla = wsGalla.value || status.value?.jodo?.galla || 0
+  const agents = wsActiveAgents.value
+  const agentSuffix = agents > 0 ? ` + ${agents} agent${agents > 1 ? 's' : ''}` : ''
   switch (phase) {
-    case 'thinking': return `Thinking (g${galla})`
-    case 'sleeping': return 'Sleeping'
+    case 'thinking': return `Thinking (g${galla})${agentSuffix}`
+    case 'sleeping': return agents > 0 ? `Sleeping${agentSuffix}` : 'Sleeping'
     case 'booting': return 'Booting...'
     default: return 'Running'
   }
@@ -69,8 +74,10 @@ const activityDotClass = computed(() => {
 const navItems = [
   { path: '/', name: 'Chat', icon: 'chat' },
   { path: '/status', name: 'Status', icon: 'status' },
+  { path: '/library', name: 'Library', icon: 'library' },
   { path: '/growth', name: 'Growth', icon: 'growth' },
   { path: '/logs', name: 'Logs', icon: 'logs' },
+  { path: '/inbox', name: 'Inbox', icon: 'inbox' },
   { path: '/memories', name: 'Memories', icon: 'memories' },
   { path: '/timeline', name: 'Timeline', icon: 'timeline' },
   { path: '/settings', name: 'Settings', icon: 'settings' },
@@ -118,6 +125,9 @@ defineEmits<{ close: [] }>()
         <svg v-else-if="item.icon === 'status'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
+        <svg v-else-if="item.icon === 'library'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        </svg>
         <svg v-else-if="item.icon === 'settings'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -130,6 +140,9 @@ defineEmits<{ close: [] }>()
         </svg>
         <svg v-else-if="item.icon === 'logs'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+        </svg>
+        <svg v-else-if="item.icon === 'inbox'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
         </svg>
         <svg v-else-if="item.icon === 'timeline'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
