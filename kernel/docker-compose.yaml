@@ -37,7 +37,7 @@ services:
       - "9001:9001"
     volumes:
       - jodo-brain:/opt/jodo/brain
-      - ./.ssh/jodo_key.pub:/root/.ssh/authorized_keys:ro
+      - ./.ssh/jodo_key.pub:/tmp/jodo_key.pub:ro
     profiles:
       - docker-mode
 

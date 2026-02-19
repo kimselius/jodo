@@ -13,6 +13,9 @@ RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
 # Create brain directory
 RUN mkdir -p /opt/jodo/brain
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 22 9000 9001
 
-CMD ["/usr/sbin/sshd", "-D"]
+ENTRYPOINT ["/entrypoint.sh"]
