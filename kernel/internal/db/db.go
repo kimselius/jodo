@@ -3,12 +3,15 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"time"
 
 	_ "github.com/lib/pq"
 	"jodo-kernel/internal/config"
 )
 
-// Connect opens a connection to postgres and pings it.
+// Connect opens a connection to postgres, retrying for up to 30 seconds
+// while Postgres starts up (common in Docker).
 func Connect(cfg config.DatabaseConfig) (*sql.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -23,12 +26,20 @@ func Connect(cfg config.DatabaseConfig) (*sql.DB, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+	// Retry — Postgres may still be starting in Docker
+	var lastErr error
+	for attempt := 1; attempt <= 15; attempt++ {
+		if err := db.Ping(); err == nil {
+			return db, nil
+		} else {
+			lastErr = err
+			log.Printf("[db] waiting for postgres (attempt %d/15): %v", attempt, err)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
-	return db, nil
+	db.Close()
+	return nil, fmt.Errorf("ping database after 30s: %w", lastErr)
 }
 
 // RunMigrations creates the required tables if they don't exist.

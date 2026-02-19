@@ -2,11 +2,16 @@ package git
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"jodo-kernel/internal/config"
 )
+
+// validGitRef matches safe git references (tags, hashes, branch names).
+// Rejects shell metacharacters to prevent injection.
+var validGitRef = regexp.MustCompile(`^[a-zA-Z0-9._\-/]+$`)
 
 // Manager handles git operations on Jodo's brain/ repo via SSH.
 type Manager struct {
@@ -178,7 +183,16 @@ func (m *Manager) StableTagCount() (int, error) {
 	return count, nil
 }
 
-// HealthySince returns how many seconds ago the brain was last modified.
+// GitExists checks if .git directory exists on VPS 2.
+func (m *Manager) GitExists() bool {
+	output, err := m.sshRunner(fmt.Sprintf("test -d %s/.git && echo 'yes' || echo 'no'", m.cfg.BrainPath))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "yes"
+}
+
+// LastModifiedAgo returns how long since the brain was last modified.
 // Used to determine if Jodo has been stable enough to tag.
 func (m *Manager) LastModifiedAgo() (time.Duration, error) {
 	output, err := m.sshRunner(fmt.Sprintf(

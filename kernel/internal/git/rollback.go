@@ -14,6 +14,16 @@ type RollbackResponse struct {
 
 // Rollback resets Jodo's brain to a previous commit or tag.
 func (m *Manager) Rollback(target string) (*RollbackResponse, error) {
+	// Validate target to prevent shell injection
+	if !validGitRef.MatchString(target) {
+		return nil, fmt.Errorf("invalid rollback target: %q", target)
+	}
+
+	// Check .git exists
+	if !m.GitExists() {
+		return nil, fmt.Errorf("rollback impossible: .git directory missing")
+	}
+
 	currentHash, err := m.CurrentHash()
 	if err != nil {
 		return nil, fmt.Errorf("get current hash: %w", err)
@@ -33,18 +43,26 @@ func (m *Manager) Rollback(target string) (*RollbackResponse, error) {
 }
 
 // WipeBrain removes everything in brain/ for a nuclear rebirth.
+// Handles missing .git gracefully — just deletes all files.
 func (m *Manager) WipeBrain() error {
-	cmd := fmt.Sprintf(
-		"cd %s && find . -not -name '.git' -not -path './.git/*' -not -name '.' -delete 2>/dev/null; true",
-		m.cfg.BrainPath,
-	)
-	_, err := m.sshRunner(cmd)
-	if err != nil {
-		return fmt.Errorf("wipe brain: %w", err)
+	if m.GitExists() {
+		// Preserve .git, delete everything else
+		cmd := fmt.Sprintf(
+			"cd %s && find . -not -name '.git' -not -path './.git/*' -not -name '.' -delete 2>/dev/null; true",
+			m.cfg.BrainPath,
+		)
+		if _, err := m.sshRunner(cmd); err != nil {
+			return fmt.Errorf("wipe brain: %w", err)
+		}
+		m.Commit("nuclear rebirth — wiped brain")
+	} else {
+		// No .git — just delete everything and recreate the directory
+		cmd := fmt.Sprintf("rm -rf %s/* %s/.* 2>/dev/null; mkdir -p %s; true",
+			m.cfg.BrainPath, m.cfg.BrainPath, m.cfg.BrainPath)
+		if _, err := m.sshRunner(cmd); err != nil {
+			return fmt.Errorf("wipe brain (no git): %w", err)
+		}
 	}
-
-	// Commit the wipe
-	m.Commit("nuclear rebirth — wiped brain")
 	return nil
 }
 
