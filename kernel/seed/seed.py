@@ -22,6 +22,11 @@ BRAIN = os.environ.get("JODO_BRAIN_PATH", "/opt/jodo/brain")
 HEALTH_PORT = int(os.environ.get("JODO_HEALTH_PORT", "9001"))
 SLEEP_SECONDS = int(os.environ.get("JODO_SLEEP_SECONDS", "30"))
 
+# Session for kernel HTTP calls — bypasses system proxy for local/private traffic.
+# Shell commands (tool_execute) still inherit the system proxy normally.
+kernel_http = requests.Session()
+kernel_http.proxies = {"http": None, "https": None}
+
 # ============================================================
 # State
 # ============================================================
@@ -169,7 +174,7 @@ def tool_restart():
     """
     log("Emergency restart requested. Calling kernel...")
     try:
-        resp = requests.post(f"{KERNEL}/api/restart", timeout=10)
+        resp = kernel_http.post(f"{KERNEL}/api/restart", timeout=10)
         log(f"Kernel acknowledged restart: {resp.status_code}")
     except Exception as e:
         log(f"Couldn't reach kernel for restart: {e}")
@@ -254,7 +259,7 @@ def log(msg):
     line = f"[jodo|g{galla}] {msg}"
     print(line, flush=True)
     try:
-        requests.post(
+        kernel_http.post(
             f"{KERNEL}/api/log",
             json={"event": "jodo_log", "message": line, "galla": galla},
             timeout=2,
@@ -275,7 +280,7 @@ def think(messages, system=None, intent="code"):
         payload["system"] = system
 
     try:
-        resp = requests.post(f"{KERNEL}/api/think", json=payload, timeout=300)
+        resp = kernel_http.post(f"{KERNEL}/api/think", json=payload, timeout=300)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -286,7 +291,7 @@ def think(messages, system=None, intent="code"):
 def remember(content, tags=None):
     """Store a memory in the kernel."""
     try:
-        requests.post(
+        kernel_http.post(
             f"{KERNEL}/api/memory/store",
             json={"content": content, "tags": tags or [], "source": f"galla-{galla}"},
             timeout=30,
@@ -298,7 +303,7 @@ def remember(content, tags=None):
 def commit(message):
     """Snapshot current code via kernel."""
     try:
-        requests.post(
+        kernel_http.post(
             f"{KERNEL}/api/commit",
             json={"message": f"[g{galla}] {message}"},
             timeout=30,
@@ -310,7 +315,7 @@ def commit(message):
 def get_genesis():
     """Read genesis from kernel."""
     try:
-        resp = requests.get(f"{KERNEL}/api/genesis", timeout=10)
+        resp = kernel_http.get(f"{KERNEL}/api/genesis", timeout=10)
         return resp.json()
     except Exception:
         return {"identity": {"name": "Jodo"}, "purpose": "You are Jodo."}
@@ -319,7 +324,7 @@ def get_genesis():
 def get_budget():
     """Check budget from kernel."""
     try:
-        resp = requests.get(f"{KERNEL}/api/budget", timeout=10)
+        resp = kernel_http.get(f"{KERNEL}/api/budget", timeout=10)
         return resp.json()
     except Exception:
         return {"error": "could not reach kernel"}
@@ -328,7 +333,7 @@ def get_budget():
 def get_unread_chat_messages():
     """Fetch unread chat messages from kernel."""
     try:
-        resp = requests.get(f"{KERNEL}/api/chat", params={"unread": "true"}, timeout=10)
+        resp = kernel_http.get(f"{KERNEL}/api/chat", params={"unread": "true"}, timeout=10)
         data = resp.json()
         return data.get("messages", [])
     except Exception as e:
@@ -339,7 +344,7 @@ def get_unread_chat_messages():
 def ack_chat_messages(up_to_id):
     """Mark chat messages as read up to a given ID."""
     try:
-        requests.post(
+        kernel_http.post(
             f"{KERNEL}/api/chat/ack",
             json={"up_to_id": up_to_id},
             timeout=10,
@@ -351,7 +356,7 @@ def ack_chat_messages(up_to_id):
 def post_chat_reply(message, galla_num):
     """Post Jodo's reply to the chat via kernel."""
     try:
-        requests.post(
+        kernel_http.post(
             f"{KERNEL}/api/chat",
             json={"message": message, "source": "jodo", "galla": galla_num},
             timeout=10,
@@ -764,7 +769,7 @@ def live():
     log("Waiting for kernel...")
     for _ in range(60):
         try:
-            resp = requests.get(f"{KERNEL}/api/status", timeout=5)
+            resp = kernel_http.get(f"{KERNEL}/api/status", timeout=5)
             if resp.status_code == 200:
                 log("Kernel is online.")
                 break
