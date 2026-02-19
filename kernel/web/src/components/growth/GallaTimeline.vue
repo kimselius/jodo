@@ -1,9 +1,20 @@
 <script setup lang="ts">
+import { ref, nextTick, watch } from 'vue'
 import { useGallas } from '@/composables/useGallas'
 import GallaCard from '@/components/growth/GallaCard.vue'
 import Button from '@/components/ui/Button.vue'
 
 const { gallas, loading, error, load } = useGallas()
+const bottom = ref<HTMLElement>()
+
+// Auto-scroll to bottom when new gallas arrive
+watch(
+  () => gallas.value.length,
+  async () => {
+    await nextTick()
+    bottom.value?.scrollIntoView({ behavior: 'smooth' })
+  }
+)
 </script>
 
 <template>
@@ -29,6 +40,7 @@ const { gallas, loading, error, load } = useGallas()
         :key="g.id"
         :galla="g"
       />
+      <div ref="bottom" />
     </div>
   </div>
 </template>

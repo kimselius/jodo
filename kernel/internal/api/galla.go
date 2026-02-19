@@ -63,6 +63,9 @@ func (s *Server) handleGallaPost(c *gin.Context) {
 		}
 	}
 
+	// Broadcast to connected frontends so Growth page auto-updates
+	s.WS.Broadcast("growth", gin.H{"galla": req.Galla})
+
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 

@@ -74,6 +74,9 @@ func (s *Server) handleLog(c *gin.Context) {
 	// Also record in growth log
 	s.Growth.Log("jodo_log", req.Message, "", map[string]interface{}{"galla": req.Galla})
 
+	// Broadcast to connected frontends
+	s.WS.Broadcast("growth", gin.H{"event": req.Event, "galla": req.Galla})
+
 	c.JSON(http.StatusOK, gin.H{"status": "logged"})
 }
 

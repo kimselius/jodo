@@ -43,6 +43,11 @@ const router = createRouter({
       component: () => import('@/views/GrowthView.vue'),
     },
     {
+      path: '/logs',
+      name: 'logs',
+      component: () => import('@/views/LogView.vue'),
+    },
+    {
       path: '/timeline',
       name: 'timeline',
       component: () => import('@/views/TimelineView.vue'),

@@ -349,9 +349,9 @@ def commit(message):
         log(f"Commit failed: {e}")
 
 
-def post_galla(plan=None, summary=None, actions_count=None):
+def post_galla(plan=None, summary=None, actions_count=None, galla_num=None):
     """Post galla plan/summary to kernel for the Growth timeline."""
-    payload = {"galla": galla}
+    payload = {"galla": galla_num if galla_num is not None else galla}
     if plan is not None:
         payload["plan"] = plan
     if summary is not None:
@@ -362,6 +362,24 @@ def post_galla(plan=None, summary=None, actions_count=None):
         kernel_http.post(f"{KERNEL}/api/galla", json=payload, timeout=10)
     except Exception as e:
         log(f"Galla post failed: {e}")
+
+
+def ensure_galla_zero():
+    """Backfill galla 0 if it's missing (for instances born before galla tracking)."""
+    try:
+        resp = kernel_http.get(f"{KERNEL}/api/galla?limit=1000", timeout=10)
+        gallas_list = resp.json().get("gallas", [])
+        if any(g["galla"] == 0 for g in gallas_list):
+            return  # already exists
+        log("Backfilling galla 0 record (born before tracking was added)")
+        post_galla(
+            plan="(birth — before galla tracking)",
+            summary="Born and initialized.",
+            actions_count=0,
+            galla_num=0,
+        )
+    except Exception:
+        pass
 
 
 def get_genesis():
@@ -719,6 +737,10 @@ def live():
         log("Galla 0 — Birth")
         remember("I have been born. Galla 0. Running seed.py.", tags=["birth"])
 
+    # 4b. Ensure galla 0 has a record (backfill for pre-tracking instances)
+    if galla > 0:
+        ensure_galla_zero()
+
     # 5. Life loop
     while alive:
         try:
@@ -756,9 +778,19 @@ def live():
                     intent="code",
                     tools=PLAN_TOOLS,
                 )
-                if plan:
+
+                # Detect plan phase failures
+                _PLAN_ERRORS = ["couldn't reach the kernel", "tool loop limit"]
+                plan_failed = not plan or any(e in (plan or "").lower() for e in _PLAN_ERRORS)
+
+                if plan_failed:
+                    log(f"Plan phase failed: {(plan or '(empty)')[:100]}")
+                    post_galla(plan=f"⚠ {plan}" if plan else "⚠ Planning failed")
+                    # Give the execution phase a reasonable fallback
+                    plan = "1. Check on human messages and respond if needed.\n2. Ensure my app is healthy.\n3. Make one small improvement."
+                else:
                     log(f"Plan: {plan[:200]}")
-                post_galla(plan=plan or "")
+                    post_galla(plan=plan)
 
                 # Phase 2: Execute the plan (with tools)
                 set_phase("thinking")

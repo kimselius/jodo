@@ -11,6 +11,31 @@ const props = defineProps<{ galla: GallaEntry }>()
 const planOpen = ref(false)
 const isComplete = computed(() => props.galla.completed_at !== null)
 
+const ERROR_PATTERNS = [
+  "couldn't reach the kernel",
+  "tool loop limit",
+  "think failed",
+  "planning failed",
+]
+
+const isErrorSummary = computed(() => {
+  const s = (props.galla.summary || '').toLowerCase()
+  return ERROR_PATTERNS.some(p => s.includes(p))
+})
+
+const hasPlan = computed(() => {
+  const p = props.galla.plan
+  if (!p) return false
+  // Hide placeholder plans
+  if (p === '(birth — no planning phase)' || p === '(birth — before galla tracking)') return false
+  return true
+})
+
+const isPlanError = computed(() => {
+  const p = (props.galla.plan || '').toLowerCase()
+  return p.startsWith('\u26a0') || ERROR_PATTERNS.some(pat => p.includes(pat))
+})
+
 function renderMd(text: string | null): string {
   if (!text) return ''
   return marked.parse(text, { async: false }) as string
@@ -22,16 +47,22 @@ function renderMd(text: string | null): string {
     <!-- Header -->
     <div class="flex items-center gap-2 flex-wrap">
       <span class="text-sm font-semibold">Galla {{ galla.galla }}</span>
-      <Badge v-if="isComplete" variant="success" class="text-[10px]">
+      <Badge v-if="isErrorSummary" variant="destructive" class="text-[10px]">error</Badge>
+      <Badge v-else-if="isComplete" variant="success" class="text-[10px]">
         {{ galla.actions_count }} action{{ galla.actions_count !== 1 ? 's' : '' }}
       </Badge>
       <Badge v-else variant="warning" class="text-[10px]">in progress</Badge>
       <span class="text-[10px] text-muted-foreground ml-auto">{{ formatTime(galla.started_at) }}</span>
     </div>
 
+    <!-- Error summary -->
+    <div v-if="isErrorSummary" class="text-sm text-muted-foreground italic">
+      {{ galla.summary }}
+    </div>
+
     <!-- Summary (main content) -->
     <div
-      v-if="galla.summary"
+      v-else-if="galla.summary"
       class="prose prose-sm prose-invert max-w-none text-sm text-foreground [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:rounded-md [&_pre]:text-xs [&_code]:text-xs [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium"
       v-html="renderMd(galla.summary)"
     />
@@ -43,7 +74,7 @@ function renderMd(text: string | null): string {
     </div>
 
     <!-- Plan (collapsible) -->
-    <div v-if="galla.plan && galla.plan !== '(birth — no planning phase)'">
+    <div v-if="hasPlan">
       <button
         @click="planOpen = !planOpen"
         class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -55,11 +86,16 @@ function renderMd(text: string | null): string {
         >
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        Plan
+        <span :class="isPlanError ? 'text-destructive/70' : ''">
+          {{ isPlanError ? 'Plan (failed)' : 'Plan' }}
+        </span>
       </button>
       <div
         v-if="planOpen"
-        class="mt-2 pl-3 border-l-2 border-border prose prose-sm prose-invert max-w-none text-xs text-muted-foreground [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:rounded-md [&_pre]:text-xs [&_code]:text-xs [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5"
+        :class="[
+          'mt-2 pl-3 border-l-2 prose prose-sm prose-invert max-w-none text-xs [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:rounded-md [&_pre]:text-xs [&_code]:text-xs [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5',
+          isPlanError ? 'border-destructive/30 text-muted-foreground italic' : 'border-border text-muted-foreground'
+        ]"
         v-html="renderMd(galla.plan)"
       />
     </div>
