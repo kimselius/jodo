@@ -1,11 +1,13 @@
 package process
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,10 +19,11 @@ import (
 
 // Manager handles Jodo's process lifecycle on VPS 2 via SSH.
 type Manager struct {
-	cfg       config.JodoConfig
-	kernelURL string // externally-reachable kernel URL for seed.py
-	mu        sync.RWMutex
-	status    JodoStatus
+	cfg              config.JodoConfig
+	kernelURL        string // externally-reachable kernel URL for seed.py
+	mu               sync.RWMutex
+	status           JodoStatus
+	gracePeriodUntil time.Time // health checks don't escalate before this time
 }
 
 // JodoStatus represents Jodo's current state.
@@ -100,6 +103,20 @@ func (m *Manager) IncrementRestarts() {
 	m.status.RestartsToday++
 }
 
+// SetGracePeriod sets a window during which health check failures won't escalate.
+func (m *Manager) SetGracePeriod(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gracePeriodUntil = time.Now().Add(d)
+}
+
+// InGracePeriod returns true if we're within a post-restart grace period.
+func (m *Manager) InGracePeriod() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return time.Now().Before(m.gracePeriodUntil)
+}
+
 // RunSSH executes a command on VPS 2 via SSH with a 10-second timeout.
 func (m *Manager) RunSSH(cmd string) (string, error) {
 	client, err := m.sshConnect()
@@ -173,6 +190,7 @@ func (m *Manager) StartJodo() error {
 	m.status.UptimeStart = time.Now()
 	m.mu.Unlock()
 
+	m.SetGracePeriod(30 * time.Second)
 	log.Printf("[process] seed.py started with PID %d", pid)
 	return nil
 }
@@ -186,6 +204,21 @@ func (m *Manager) StartSeed(seedPath string) error {
 	seedData, err := os.ReadFile(seedPath)
 	if err != nil {
 		return fmt.Errorf("read seed: %w", err)
+	}
+
+	// Merge prompt files into seed template
+	promptsDir := filepath.Join(filepath.Dir(seedPath), "prompts")
+	if entries, err := os.ReadDir(promptsDir); err == nil {
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".prompt") {
+				name := strings.TrimSuffix(entry.Name(), ".prompt")
+				marker := "__PROMPT_" + strings.ToUpper(name) + "__"
+				if content, err := os.ReadFile(filepath.Join(promptsDir, entry.Name())); err == nil {
+					seedData = bytes.Replace(seedData, []byte(marker), content, 1)
+				}
+			}
+		}
+		log.Printf("[process] merged prompt files from %s", promptsDir)
 	}
 
 	// Write seed.py via SSH (using heredoc)
@@ -220,6 +253,7 @@ SEEDEOF`,
 	m.status.UptimeStart = time.Now()
 	m.mu.Unlock()
 
+	m.SetGracePeriod(30 * time.Second)
 	log.Printf("[process] seed started with PID %d", pid)
 	return nil
 }
