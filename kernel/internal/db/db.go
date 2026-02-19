@@ -74,6 +74,14 @@ func RunMigrations(db *sql.DB) error {
 			details JSONB DEFAULT '{}',
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+
+		`CREATE TABLE IF NOT EXISTS chat_messages (
+			id SERIAL PRIMARY KEY,
+			source VARCHAR(20) NOT NULL,
+			message TEXT NOT NULL,
+			galla INTEGER,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -97,6 +105,11 @@ func RunMigrations(db *sql.DB) error {
 		`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'budget_usage_created_idx') THEN
 				CREATE INDEX budget_usage_created_idx ON budget_usage (created_at);
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'chat_messages_created_idx') THEN
+				CREATE INDEX chat_messages_created_idx ON chat_messages (created_at);
 			END IF;
 		END $$`,
 	}

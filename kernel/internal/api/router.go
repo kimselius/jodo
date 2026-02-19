@@ -1,6 +1,8 @@
 package api
 
 import (
+	"database/sql"
+
 	"github.com/gin-gonic/gin"
 	"jodo-kernel/internal/audit"
 	"jodo-kernel/internal/config"
@@ -22,6 +24,7 @@ type Server struct {
 	Git      *git.Manager
 	Growth   *growth.Logger
 	Audit    *audit.Logger
+	DB       *sql.DB
 }
 
 // SetupRouter creates and configures the Gin router with all API routes.
@@ -56,6 +59,8 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.POST("/rollback", s.handleRollback)
 		api.GET("/history", s.handleHistory)
 		api.POST("/log", s.handleLog)
+		api.POST("/chat", s.handleChatPost)
+		api.GET("/chat", s.handleChatGet)
 	}
 
 	// Dashboard is mounted externally in main.go

@@ -10,23 +10,29 @@ Jodo is a self-building AI agent. You give it a seed — a tiny Python script wi
 Jodo runs on two servers:
 
 ```
+                          ┌──────────────────────┐
+                          │    Human (browser)    │
+                          └──────────┬───────────┘
+                                     │ http :9000
+                                     ▼
 ┌─────────────────────────┐         SSH         ┌─────────────────────────┐
 │       VPS 1 (Kernel)    │◄───────────────────►│     VPS 2 (Jodo)        │
 │                         │                      │                         │
-│  ┌───────────────────┐  │    POST /api/think   │  ┌───────────────────┐  │
-│  │   Jodo Kernel     │◄─┼──────────────────────┼──│    seed.py        │  │
+│  ┌───────────────────┐  │  /api/think, /api/   │  ┌───────────────────┐  │
+│  │   Jodo Kernel     │◄─┼──────chat, etc───────┼──│    seed.py        │  │
 │  │   (Go)            │──┼──────────────────────┼─►│    ↓              │  │
 │  │                   │  │     LLM response      │  │    main.py        │  │
 │  │  • LLM proxy      │  │                      │  │    (self-built)   │  │
-│  │  • Budget mgmt    │  │                      │  │                   │  │
-│  │  • Memory (pgvec) │  │                      │  │  • Chat app :9000 │  │
-│  │  • Git snapshots  │  │                      │  │  • /health  :9001 │  │
-│  │  • Health monitor │  │                      │  │  • Brain endpoint │  │
-│  │  • Audit log      │  │                      │  │  • Whatever it    │  │
-│  └───────────────────┘  │                      │  │    builds next    │  │
-│                         │                      │  └───────────────────┘  │
-│  ┌───────────────────┐  │                      │                         │
-│  │  PostgreSQL       │  │                      │  /opt/jodo/brain/       │
+│  │  • Chat messages  │  │  /api/chat            │  │                   │  │
+│  │  • Budget mgmt    │◄─┼──────────────────────┼──│  • Chat app :9000 │  │
+│  │  • Memory (pgvec) │  │                      │  │  • /health  :9001 │  │
+│  │  • Git snapshots  │  │                      │  │  • Whatever it    │  │
+│  │  • Health monitor │  │                      │  │    builds next    │  │
+│  │  • Audit log      │  │                      │  │                   │  │
+│  └───────────────────┘  │                      │  └───────────────────┘  │
+│                         │                      │                         │
+│  ┌───────────────────┐  │                      │  /opt/jodo/brain/       │
+│  │  PostgreSQL       │  │                      │                         │
 │  │  + pgvector       │  │                      │                         │
 │  └───────────────────┘  │                      │                         │
 │                         │                      │                         │
@@ -36,9 +42,11 @@ Jodo runs on two servers:
 └─────────────────────────┘                      └─────────────────────────┘
 ```
 
-**The Kernel** (VPS 1) is the BIOS. It doesn't think — it provides infrastructure. LLM inference, memory, version control, health monitoring. It runs in Docker.
+**The Kernel** (VPS 1) is the BIOS. It doesn't think — it provides infrastructure. LLM inference, memory, version control, health monitoring, and the conversation store. It runs in Docker.
 
 **Jodo** (VPS 2) is the agent. It runs as `seed.py` — a small Python script that knows how to think (via the kernel), use tools, and loop. On its first boot (galla 0), it builds a chat app so you can talk to it. After that, seed.py keeps running as Jodo's consciousness — waking up, thinking, and evolving every galla.
+
+**The conversation** flows through the kernel. The human types in the chat UI (port 9000) → the chat app posts the message to the kernel's chat API → seed.py fetches new messages each galla → Jodo thinks and replies via the kernel. The kernel is the single source of truth for all human ↔ Jodo conversation.
 
 ## The seed
 
@@ -68,6 +76,8 @@ The kernel provides APIs that Jodo calls via HTTP:
 | Endpoint | Purpose |
 |----------|---------|
 | `POST /api/think` | LLM inference — Jodo's ability to think |
+| `POST /api/chat` | Send a chat message (human or Jodo) |
+| `GET /api/chat` | Read chat messages (`?last=N`, `?source=human`, `?since_id=N`) |
 | `POST /api/memory/store` | Store a memory (vector-embedded) |
 | `POST /api/memory/search` | Semantic memory search |
 | `POST /api/commit` | Git snapshot of Jodo's code |

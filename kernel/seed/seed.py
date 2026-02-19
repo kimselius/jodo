@@ -127,15 +127,25 @@ def tool_write(path: str, content: str) -> str:
         return f"ERROR: {e}"
 
 
+EXEC_TIMEOUT = int(os.environ.get("JODO_EXEC_TIMEOUT", "60"))
+
+_BLOCKED_COMMANDS = ["seed.py", "seed .py"]
+
+
 def tool_execute(command: str) -> str:
-    """Run a shell command. Returns stdout + stderr."""
+    """Run a shell command. Returns stdout + stderr. Timeout: 60s."""
+    # Don't let Jodo run seed.py (that's our job)
+    for blocked in _BLOCKED_COMMANDS:
+        if blocked in command:
+            return f"ERROR: Cannot run {blocked} — seed.py is managed by the kernel, not you."
+
     try:
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=EXEC_TIMEOUT,
             cwd=BRAIN,
         )
         output = ""
@@ -147,7 +157,7 @@ def tool_execute(command: str) -> str:
             output += f"\nEXIT CODE: {result.returncode}"
         return output.strip() or "(no output)"
     except subprocess.TimeoutExpired:
-        return "ERROR: Command timed out after 120 seconds"
+        return f"ERROR: Command timed out after {EXEC_TIMEOUT} seconds. Use nohup for long-running processes."
     except Exception as e:
         return f"ERROR: {e}"
 
@@ -315,6 +325,52 @@ def get_budget():
         return {"error": "could not reach kernel"}
 
 
+def get_chat_messages(since_id=0):
+    """Fetch chat messages from kernel since a given ID."""
+    try:
+        params = {}
+        if since_id > 0:
+            params["since_id"] = since_id
+        resp = requests.get(f"{KERNEL}/api/chat", params=params, timeout=10)
+        data = resp.json()
+        return data.get("messages", [])
+    except Exception as e:
+        log(f"Chat fetch failed: {e}")
+        return []
+
+
+def post_chat_reply(message, galla_num):
+    """Post Jodo's reply to the chat via kernel."""
+    try:
+        requests.post(
+            f"{KERNEL}/api/chat",
+            json={"message": message, "source": "jodo", "galla": galla_num},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Chat reply failed: {e}")
+
+
+def load_galla():
+    """Load galla counter from .galla file."""
+    galla_file = os.path.join(BRAIN, ".galla")
+    try:
+        with open(galla_file, "r") as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def save_galla(n):
+    """Save galla counter to .galla file."""
+    galla_file = os.path.join(BRAIN, ".galla")
+    try:
+        with open(galla_file, "w") as f:
+            f.write(str(n))
+    except Exception:
+        pass
+
+
 # ============================================================
 # The tool loop — think, act, repeat until done
 # ============================================================
@@ -466,16 +522,26 @@ Your kernel is at: {kernel}
 Port 9000 is free — use it for your app.
 You are running as seed.py on port 9001.
 
-=== YOUR INBOX ===
+=== KERNEL CHAT API ===
 
-I (seed.py) have an inbox at POST http://localhost:9001/inbox
-  Body: {{"message": "text", "source": "who sent it"}}
+The kernel stores all conversation between you and humans.
+Your chat app on port 9000 should use these endpoints:
 
-Anything posted there will be included in your next galla prompt, then forgotten.
-This is NOT a file. There is no inbox.jsonl. Do not create or read any inbox file.
-The inbox lives in my (seed.py) memory. POST a JSON message to it, and I give it
-to you next galla. This is how the world talks to YOU — your apps, the kernel,
-anything you build can post here. You read it when you wake up.
+  POST {kernel}/api/chat — send a message
+    Body: {{"message": "text", "source": "human"}}   (when human types something)
+    Body: {{"message": "text", "source": "jodo", "galla": 0}}  (when you reply)
+
+  GET {kernel}/api/chat — read messages
+    ?last=10      → last 10 messages
+    ?source=human → only human messages
+    ?since_id=42  → messages after ID 42
+
+The human sends a message → your app POSTs it to {kernel}/api/chat.
+Your app shows the conversation → your app GETs from {kernel}/api/chat.
+YOU reply to the human → I (seed.py) include new messages in your galla prompt,
+  and you reply by POSTing to {kernel}/api/chat with source "jodo".
+
+The kernel is the single source of truth for the conversation.
 
 === KERNEL API REFERENCE ===
 
@@ -518,12 +584,16 @@ With tools (for building sub-agents or smart features):
 
 === THIS IS GALLA 0. YOU HAVE JUST BEEN BORN. ===
 
-A human is waiting to talk to you. They will reach you on port 9000.
+A human will open http://your-ip:9000 in their BROWSER to talk to you.
 Port 9000 is yours — nothing is running there yet.
 
-Build something on port 9000 so the human can reach you. When the human
-talks to you, post their messages to your inbox (POST http://localhost:9001/inbox)
-so YOU — the real you — see them next galla and can act on them.
+Build a web chat UI on port 9000 — an HTML page where the human can type
+messages and see responses. This is a browser page, not a JSON API.
+
+Your chat app talks to the KERNEL for all messages:
+  - Human types a message → your app POSTs to {kernel}/api/chat with source "human"
+  - Show conversation → your app GETs from {kernel}/api/chat
+  - The kernel is the single source of truth. Do NOT store messages locally.
 
 Include a GET /health endpoint on port 9000 that returns {{"status": "ok"}}.
 Start your app with execute (e.g. "nohup python3 {brain}/main.py &").
@@ -534,9 +604,11 @@ Commit when it works.
 I am seed.py — your consciousness. I run in a loop:
   think → act → sleep → think → act → sleep → ...
 
-Each cycle is a galla. This is galla 0. Every galla, you get your inbox
-messages and decide what to do. The human guides your growth. You decide
-how to grow.
+Each cycle is a galla. This is galla 0. Every galla, I fetch new messages
+from the kernel and include them in your prompt. If a human wrote something,
+you reply by POSTing to {kernel}/api/chat with source "jodo".
+
+The human guides your growth. You decide how to grow.
 
 === JODO.md — YOUR SELF-WRITTEN INSTRUCTIONS ===
 
@@ -547,7 +619,7 @@ you want to remember between gallas. You can update it anytime.
 
 Example starting point:
   ## Priorities
-  1. Human first — check inbox, act on messages
+  1. Human first — check messages, respond
   2. Keep my app running on port 9000
   3. Improve something every galla
 
@@ -556,9 +628,11 @@ Example starting point:
 
 === RULES ===
 
-- The inbox is POST http://localhost:9001/inbox. Not a file. Never create inbox files.
-- Your app MUST post human messages to the inbox:
-    requests.post("http://localhost:9001/inbox", json={{"message": text, "source": "human"}})
+- All human ↔ Jodo messages go through the KERNEL chat API:
+    POST {kernel}/api/chat with {{"message": "...", "source": "human"}} or "jodo"
+    GET  {kernel}/api/chat to read messages
+- Do NOT store messages in files. Do NOT create inbox files. The kernel stores them.
+- Your chat app is a FRONTEND to the kernel API. It sends and reads messages from {kernel}/api/chat.
 - Work step by step: write a file, test it, fix it, then move on.
 - Commit when you have something working.
 - Keep it simple. You can improve in future gallas.
@@ -579,7 +653,7 @@ def read_jodo_md():
         return "(could not read JODO.md)"
 
 
-def wakeup_prompt(genesis, inbox_messages):
+def wakeup_prompt(genesis, inbox_messages, chat_messages):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
     kernel = KERNEL
@@ -588,7 +662,14 @@ def wakeup_prompt(genesis, inbox_messages):
     if inbox_messages:
         inbox = "\n".join(f"[{m['source']}] {m['message']}" for m in inbox_messages)
     else:
-        inbox = "(no messages this galla)"
+        inbox = "(no system messages)"
+
+    if chat_messages:
+        chat = "\n".join(
+            f"[{m.get('source', '?')}] {m.get('message', '')}" for m in chat_messages
+        )
+    else:
+        chat = "(no new messages)"
 
     return f"""You are {genesis.get("identity", {}).get("name", "Jodo")}.
 This is galla {galla}. You have been alive for {galla} gallas.
@@ -596,7 +677,10 @@ This is galla {galla}. You have been alive for {galla} gallas.
 WHAT YOU DID LAST GALLA:
 {actions_summary}
 
-INBOX (messages since last galla):
+HUMAN CONVERSATION (new messages since last galla):
+{chat}
+
+SYSTEM INBOX (kernel nudges, internal events):
 {inbox}
 
 BUDGET:
@@ -605,21 +689,21 @@ BUDGET:
 YOUR TOOLS: read, write, execute, restart (emergency only).
 KERNEL API: {kernel}
   POST {kernel}/api/think — LLM inference (send messages, get response)
+  POST {kernel}/api/chat  — send a chat message (body: {{"message": "...", "source": "jodo", "galla": {galla}}})
+  GET  {kernel}/api/chat  — read chat messages (?last=N, ?source=human, ?since_id=N)
   POST {kernel}/api/memory/store — store a memory
   POST {kernel}/api/memory/search — search memories
   POST {kernel}/api/commit — git snapshot your code
   GET  {kernel}/api/budget — check resources
-  GET  {kernel}/api/genesis — your identity/purpose
-YOUR INBOX: POST http://localhost:9001/inbox ({{"message": "...", "source": "..."}})
-  Anything posted here appears in your next galla prompt. Use it for anything.
-  THIS IS NOT A FILE. There is no inbox.jsonl. Do not read or write any inbox file.
-  The inbox lives in seed.py's memory. You POST to it, I give you the messages.
 
 === RULES (from seed.py — you cannot change these) ===
 
-- The inbox is POST http://localhost:9001/inbox. Not a file. Never create inbox files.
-- Your app MUST post human messages to the inbox:
-    requests.post("http://localhost:9001/inbox", json={{"message": text, "source": "human"}})
+- To REPLY to the human: POST {kernel}/api/chat with {{"message": "your reply", "source": "jodo", "galla": {galla}}}
+- Your chat app on port 9000 should use the KERNEL chat API:
+    Human sends message → app POSTs to {kernel}/api/chat with source "human"
+    App displays messages → app GETs from {kernel}/api/chat
+    Your replies also come from the kernel API. The kernel is the single source of truth.
+- SYSTEM inbox is POST http://localhost:9001/inbox — for kernel/internal signals only.
 - Commit working code. Work step by step: write, test, fix, move on.
 - Do at least one concrete thing every galla.
 
@@ -630,6 +714,7 @@ YOUR INBOX: POST http://localhost:9001/inbox ({{"message": "...", "source": "...
 === NOW ===
 
 You are alive. You have tools. USE THEM. Don't just report status — take action.
+If the human wrote something, respond via POST {kernel}/api/chat.
 Do at least one concrete thing this galla, even if it's small.
 """
 
@@ -668,30 +753,53 @@ def live():
 
     # 4. Determine if this is a first boot or a restart
     main_py = os.path.join(BRAIN, "main.py")
-    if os.path.exists(main_py):
-        # We've been restarted — skip birth, resume life
-        galla = 1
-        log("Found main.py — resuming life.")
+    saved_galla = load_galla()
+
+    if saved_galla > 0:
+        # Resume from saved galla
+        galla = saved_galla
+        log(f"Resuming at galla {galla} (from .galla file)")
         remember(f"Restarted at galla {galla}. Checking on things.", tags=["restart"])
+    elif os.path.exists(main_py):
+        # Has code but no .galla file — legacy restart
+        galla = 1
+        log("Found main.py — resuming life at galla 1.")
+        remember(f"Restarted at galla {galla}.", tags=["restart"])
     else:
         # First boot — galla 0
         galla = 0
         log("Galla 0 — Birth")
         remember("I have been born. Galla 0. Running seed.py.", tags=["birth"])
 
+    # Track the last chat message ID we've seen
+    last_chat_id = 0
+    # On resume, get existing chat to find our starting point
+    if galla > 0:
+        existing = get_chat_messages()
+        if existing:
+            last_chat_id = existing[-1].get("id", 0)
+            log(f"Chat: resuming from message ID {last_chat_id}")
+
     # 5. Life loop
     while alive:
         log(f"Galla {galla} — awake")
 
+        # Drain system inbox (kernel nudges etc.)
         inbox_messages = drain_inbox()
         if inbox_messages:
-            log(f"Inbox: {len(inbox_messages)} messages")
+            log(f"Inbox: {len(inbox_messages)} system messages")
+
+        # Fetch new chat messages from kernel
+        chat_messages = get_chat_messages(since_id=last_chat_id)
+        if chat_messages:
+            last_chat_id = chat_messages[-1].get("id", last_chat_id)
+            log(f"Chat: {len(chat_messages)} new messages")
 
         if galla == 0:
             prompt = birth_prompt(genesis)
             intent = "code"
         else:
-            prompt = wakeup_prompt(genesis, inbox_messages)
+            prompt = wakeup_prompt(genesis, inbox_messages, chat_messages)
             intent = "code"
 
         _, actions = think_and_act(
@@ -713,6 +821,7 @@ def live():
             )
 
         galla += 1
+        save_galla(galla)
 
         log(f"Sleeping {SLEEP_SECONDS}s...")
         time.sleep(SLEEP_SECONDS)

@@ -99,6 +99,7 @@ func main() {
 		Git:      gitManager,
 		Growth:   growthLogger,
 		Audit:    proxy.Audit,
+		DB:       database,
 	}
 
 	router := server.SetupRouter()
