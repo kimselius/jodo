@@ -727,7 +727,7 @@ KERNEL API: {kernel}
 === NOW ===
 
 You are alive. You have tools. USE THEM. Don't just report status — take action.
-If the human wrote something, respond via POST {kernel}/api/chat.
+If the human wrote something new that you have not responded to yet, respond via POST {kernel}/api/chat.
 Do at least one concrete thing this galla, even if it's small.
 """
 
