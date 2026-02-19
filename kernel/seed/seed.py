@@ -36,6 +36,9 @@ alive = True
 last_actions = []
 _inbox = []
 _inbox_lock = threading.Lock()
+_heartbeat = time.time()  # updated each galla cycle
+# Max time before health reports unhealthy (sleep + think timeout + buffer)
+_HEARTBEAT_MAX = SLEEP_SECONDS + 600 + 60
 
 # ============================================================
 # Health endpoint (runs in background thread)
@@ -46,12 +49,17 @@ _inbox_lock = threading.Lock()
 class SeedHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
+            stale = (time.time() - _heartbeat) > _HEARTBEAT_MAX
+            healthy = alive and not stale
+            status = "ok" if healthy else "unhealthy"
+            code = 200 if healthy else 503
             body = json.dumps({
-                "status": "ok",
+                "status": status,
                 "galla": galla,
                 "alive": alive,
+                "heartbeat_age": int(time.time() - _heartbeat),
             }).encode()
-            self.send_response(200)
+            self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(body)
@@ -242,10 +250,20 @@ TOOLS = [
     },
 ]
 
+def _safe_tool(name, args, required, fn):
+    """Run a tool, catching missing/wrong parameter names gracefully."""
+    missing = [k for k in required if k not in args]
+    if missing:
+        return f"ERROR: tool '{name}' requires parameters: {', '.join(required)}. Got: {', '.join(args.keys())}"
+    try:
+        return fn(args)
+    except Exception as e:
+        return f"ERROR: tool '{name}' failed: {e}"
+
 TOOL_EXECUTORS = {
-    "read": lambda args: tool_read(args["path"]),
-    "write": lambda args: tool_write(args["path"], args["content"]),
-    "execute": lambda args: tool_execute(args["command"]),
+    "read": lambda args: _safe_tool("read", args, ["path"], lambda a: tool_read(a["path"])),
+    "write": lambda args: _safe_tool("write", args, ["path", "content"], lambda a: tool_write(a["path"], a["content"])),
+    "execute": lambda args: _safe_tool("execute", args, ["command"], lambda a: tool_execute(a["command"])),
     "restart": lambda args: tool_restart(),
 }
 
@@ -756,7 +774,7 @@ Do at least one concrete thing this galla, even if it's small.
 # ============================================================
 
 def live():
-    global galla, alive, last_actions
+    global galla, alive, last_actions, _heartbeat
 
     log("=" * 50)
     log("  JODO — ALIVE")
@@ -805,44 +823,51 @@ def live():
 
     # 5. Life loop
     while alive:
-        log(f"Galla {galla} — awake")
+        try:
+            _heartbeat = time.time()
+            log(f"Galla {galla} — awake")
 
-        # Drain system inbox (kernel nudges etc.)
-        inbox_messages = drain_inbox()
-        if inbox_messages:
-            log(f"Inbox: {len(inbox_messages)} system messages")
+            # Drain system inbox (kernel nudges etc.)
+            inbox_messages = drain_inbox()
+            if inbox_messages:
+                log(f"Inbox: {len(inbox_messages)} system messages")
 
-        # Fetch unread chat messages from kernel
-        chat_messages = get_unread_chat_messages()
-        if chat_messages:
-            max_id = chat_messages[-1].get("id", 0)
-            log(f"Chat: {len(chat_messages)} unread messages (up to ID {max_id})")
-            ack_chat_messages(max_id)
+            # Fetch unread chat messages from kernel
+            chat_messages = get_unread_chat_messages()
+            if chat_messages:
+                max_id = chat_messages[-1].get("id", 0)
+                log(f"Chat: {len(chat_messages)} unread messages (up to ID {max_id})")
+                ack_chat_messages(max_id)
 
-        if galla == 0:
-            prompt = birth_prompt(genesis)
-            intent = "code"
-        else:
-            prompt = wakeup_prompt(genesis, inbox_messages, chat_messages)
-            intent = "code"
+            if galla == 0:
+                prompt = birth_prompt(genesis)
+                intent = "code"
+            else:
+                prompt = wakeup_prompt(genesis, inbox_messages, chat_messages)
+                intent = "code"
 
-        _, actions = think_and_act(
-            messages=[{"role": "user", "content": prompt}],
-            intent=intent,
-        )
-        last_actions = actions
-
-        if actions:
-            log(f"Galla {galla}: {len(actions)} actions")
-            commit(f"galla {galla} — {len(actions)} actions")
-        else:
-            log(f"Galla {galla}: resting")
-
-        if galla == 0 and actions:
-            remember(
-                f"Galla 0 complete. Took {len(actions)} actions. Built initial system.",
-                tags=["birth", "milestone"],
+            _, actions = think_and_act(
+                messages=[{"role": "user", "content": prompt}],
+                intent=intent,
             )
+            last_actions = actions
+
+            if actions:
+                log(f"Galla {galla}: {len(actions)} actions")
+                commit(f"galla {galla} — {len(actions)} actions")
+            else:
+                log(f"Galla {galla}: resting")
+
+            if galla == 0 and actions:
+                remember(
+                    f"Galla 0 complete. Took {len(actions)} actions. Built initial system.",
+                    tags=["birth", "milestone"],
+                )
+
+        except Exception as e:
+            import traceback
+            log(f"Galla {galla} crashed: {e}")
+            traceback.print_exc()
 
         galla += 1
         save_galla(galla)
@@ -861,10 +886,11 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         log("Interrupted.")
     except Exception as e:
+        alive = False
         log(f"Fatal: {e}")
         import traceback
         traceback.print_exc()
-        # Keep health alive while waiting for kernel to restart us
-        log("Keeping health endpoint alive...")
+        # Keep health endpoint running (reports unhealthy) so kernel can detect and restart us
+        log("Life loop dead. Health endpoint reporting unhealthy...")
         while True:
             time.sleep(60)
