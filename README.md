@@ -259,4 +259,4 @@ The kernel exists so Jodo doesn't have to worry about infrastructure. It handles
 
 ## License
 
-MIT
+AGPL

@@ -25,6 +25,15 @@ func (s *Server) handleMemoryStore(c *gin.Context) {
 		return
 	}
 
+	// Broadcast to WebSocket clients
+	if s.WS != nil {
+		s.WS.Broadcast("memory", gin.H{
+			"content": req.Content,
+			"tags":    req.Tags,
+			"source":  req.Source,
+		})
+	}
+
 	c.JSON(http.StatusOK, resp)
 }
 

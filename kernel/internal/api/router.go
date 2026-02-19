@@ -27,6 +27,7 @@ type Server struct {
 	Audit       *audit.Logger
 	DB          *sql.DB
 	ChatHub     *ChatHub
+	WS          *WSHub
 }
 
 // SetupRouter creates and configures the Gin router with all API routes.
@@ -70,6 +71,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/memories", s.handleMemoriesList)
 		api.GET("/growth", s.handleGrowthLog)
 		api.POST("/heartbeat", s.handleHeartbeat)
+		api.GET("/ws", s.handleWS)
 	}
 
 	return r

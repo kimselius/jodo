@@ -1,14 +1,13 @@
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/lib/api'
-import { createSSE } from '@/lib/sse'
+import { onWSEvent, useWebSocket } from './useWebSocket'
 import type { ChatMessage } from '@/types/chat'
 
 export function useChat() {
   const messages = ref<ChatMessage[]>([])
   const loading = ref(true)
   const sending = ref(false)
-  const connected = ref(false)
-  let sse: ReturnType<typeof createSSE> | null = null
+  const { connected } = useWebSocket()
 
   async function loadHistory() {
     loading.value = true
@@ -22,19 +21,18 @@ export function useChat() {
     }
   }
 
-  function startSSE() {
-    sse = createSSE(
-      '/api/chat/stream',
-      (msg) => {
-        const chatMsg = msg as ChatMessage
+  // Listen for real-time chat messages via WebSocket
+  let unsub: (() => void) | null = null
+
+  function startWS() {
+    unsub = onWSEvent((event) => {
+      if (event.type === 'chat') {
+        const chatMsg = event.data as ChatMessage
         if (!messages.value.some(m => m.id === chatMsg.id)) {
           messages.value.push(chatMsg)
         }
-      },
-      (status) => {
-        connected.value = status
       }
-    )
+    })
   }
 
   async function send(text: string) {
@@ -53,11 +51,11 @@ export function useChat() {
 
   onMounted(() => {
     loadHistory()
-    startSSE()
+    startWS()
   })
 
   onUnmounted(() => {
-    sse?.close()
+    unsub?.()
   })
 
   return { messages, loading, sending, connected, send, loadHistory }

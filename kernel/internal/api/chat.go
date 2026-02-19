@@ -96,9 +96,14 @@ func (s *Server) handleChatPost(c *gin.Context) {
 	msg.Message = req.Message
 	msg.Galla = req.Galla
 
-	// Broadcast to SSE subscribers
+	// Broadcast to SSE subscribers (legacy)
 	if s.ChatHub != nil {
 		s.ChatHub.Broadcast(msg)
+	}
+
+	// Broadcast to WebSocket clients
+	if s.WS != nil {
+		s.WS.Broadcast("chat", msg)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "id": msg.ID})

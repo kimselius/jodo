@@ -27,6 +27,11 @@ func (s *Server) handleCommit(c *gin.Context) {
 		return
 	}
 
+	// Broadcast to WebSocket clients
+	if s.WS != nil {
+		s.WS.Broadcast("timeline", gin.H{"message": req.Message, "commit": resp})
+	}
+
 	c.JSON(http.StatusOK, resp)
 }
 

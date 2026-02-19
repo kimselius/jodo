@@ -91,6 +91,16 @@ func main() {
 
 	// 4. Set up API server
 	chatHub := api.NewChatHub()
+	wsHub := api.NewWSHub()
+
+	// Wire growth logger to broadcast events via WebSocket
+	growthLogger.OnEvent = func(event, note, gitHash string) {
+		wsHub.Broadcast("growth", map[string]string{
+			"event":    event,
+			"note":     note,
+			"git_hash": gitHash,
+		})
+	}
 
 	server := &api.Server{
 		Config:      cfg,
@@ -105,6 +115,7 @@ func main() {
 		Audit:       proxy.Audit,
 		DB:          database,
 		ChatHub:     chatHub,
+		WS:          wsHub,
 	}
 
 	router := server.SetupRouter()

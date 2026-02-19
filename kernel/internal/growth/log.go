@@ -9,7 +9,8 @@ import (
 
 // Logger records milestones and events in the growth_log table.
 type Logger struct {
-	db *sql.DB
+	db        *sql.DB
+	OnEvent   func(event, note, gitHash string) // optional callback for real-time broadcasting
 }
 
 func NewLogger(db *sql.DB) *Logger {
@@ -31,6 +32,11 @@ func (l *Logger) Log(event, note, gitHash string, metadata map[string]interface{
 	)
 	if err != nil {
 		log.Printf("[growth] failed to log event %q: %v", event, err)
+		return
+	}
+
+	if l.OnEvent != nil {
+		l.OnEvent(event, note, gitHash)
 	}
 }
 

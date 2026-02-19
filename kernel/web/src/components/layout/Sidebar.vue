@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useStatus } from '@/composables/useStatus'
+import { onWSEvent } from '@/composables/useWebSocket'
+import { useBadges } from '@/composables/useBadges'
 import Badge from '@/components/ui/Badge.vue'
 import Separator from '@/components/ui/Separator.vue'
 
 const route = useRoute()
-const { status } = useStatus(15_000)
+const { status } = useStatus(30_000) // slower poll — WS handles real-time
+const { badges } = useBadges()
 
-const jodoName = computed(() => status.value?.jodo?.current_git_tag || 'Jodo')
 const jodoStatus = computed(() => status.value?.jodo?.status || 'unknown')
-const jodoPhase = computed(() => status.value?.jodo?.phase || '')
-const jodoGalla = computed(() => status.value?.jodo?.galla ?? 0)
+
+// Real-time phase/galla from WS heartbeats (falls back to status poll)
+const wsPhase = ref(status.value?.jodo?.phase || '')
+const wsGalla = ref(status.value?.jodo?.galla ?? 0)
+
+const unsub = onWSEvent((event) => {
+  if (event.type === 'heartbeat') {
+    const data = event.data as { phase: string; galla: number }
+    wsPhase.value = data.phase
+    wsGalla.value = data.galla
+  }
+})
+onUnmounted(unsub)
 
 const statusVariant = computed(() => {
   switch (jodoStatus.value) {
@@ -31,9 +44,10 @@ const activityLabel = computed(() => {
   if (s === 'starting') return 'Starting...'
   if (s === 'rebirthing') return 'Rebirthing...'
   if (s === 'unhealthy') return 'Unhealthy'
-  // running — use phase
-  switch (jodoPhase.value) {
-    case 'thinking': return `Thinking (g${jodoGalla.value})`
+  const phase = wsPhase.value || status.value?.jodo?.phase || ''
+  const galla = wsGalla.value || status.value?.jodo?.galla || 0
+  switch (phase) {
+    case 'thinking': return `Thinking (g${galla})`
     case 'sleeping': return 'Sleeping'
     case 'booting': return 'Booting...'
     default: return 'Running'
@@ -46,8 +60,9 @@ const activityDotClass = computed(() => {
   if (s === 'dead') return 'bg-red-500'
   if (s === 'unhealthy') return 'bg-amber-500'
   if (s === 'starting' || s === 'rebirthing') return 'bg-amber-500 animate-pulse'
-  if (jodoPhase.value === 'thinking') return 'bg-green-500 animate-pulse'
-  if (jodoPhase.value === 'sleeping') return 'bg-blue-400'
+  const phase = wsPhase.value || status.value?.jodo?.phase || ''
+  if (phase === 'thinking') return 'bg-green-500 animate-pulse'
+  if (phase === 'sleeping') return 'bg-blue-400'
   return 'bg-green-500'
 })
 
@@ -115,7 +130,14 @@ defineEmits<{ close: [] }>()
         <svg v-else-if="item.icon === 'timeline'" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        {{ item.name }}
+        <span class="flex-1">{{ item.name }}</span>
+        <!-- Badge count -->
+        <span
+          v-if="badges[item.path] && badges[item.path] > 0 && route.path !== item.path"
+          class="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-medium text-primary-foreground"
+        >
+          {{ badges[item.path] > 99 ? '99+' : badges[item.path] }}
+        </span>
       </RouterLink>
     </nav>
 
