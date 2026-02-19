@@ -134,6 +134,38 @@ cmd_logs() {
   dc logs -f "$service"
 }
 
+cmd_destroy() {
+  echo ""
+  warn "WARNING: This will permanently destroy Jodo and all its data!"
+  warn "  - Stop all containers"
+  warn "  - Remove all Docker volumes (database, brain)"
+  warn "  - Delete .env and SSH keys"
+  echo ""
+  read -rp "Type 'destroy' to confirm: " confirm
+  if [[ "$confirm" != "destroy" ]]; then
+    info "Cancelled."
+    exit 0
+  fi
+
+  info "Stopping containers..."
+  if [ -f "$ENV_FILE" ]; then
+    if grep -q "JODO_MODE=docker" "$ENV_FILE" 2>/dev/null; then
+      dc --profile docker-mode down -v 2>/dev/null || true
+    else
+      dc down -v 2>/dev/null || true
+    fi
+  fi
+
+  info "Removing .env..."
+  rm -f "$ENV_FILE"
+
+  info "Removing SSH keys..."
+  rm -rf "$SCRIPT_DIR/kernel/.ssh"
+
+  echo ""
+  ok "Jodo has been destroyed. Run './jodo.sh setup' to start over."
+}
+
 cmd_help() {
   echo "Usage: ./jodo.sh <command>"
   echo ""
@@ -142,15 +174,17 @@ cmd_help() {
   echo "  start              Start Jodo (docker compose up --build)"
   echo "  stop               Stop Jodo (docker compose down)"
   echo "  logs [service]     Follow logs (default: kernel, also: postgres, jodo)"
+  echo "  destroy            Stop Jodo and delete all data (requires confirmation)"
   echo "  help               Show this help message"
   echo ""
 }
 
 case "${1:-help}" in
-  setup) cmd_setup ;;
-  start) cmd_start ;;
-  stop)  cmd_stop  ;;
-  logs)  cmd_logs "${2:-}" ;;
-  help)  cmd_help  ;;
-  *)     err "Unknown command: $1"; cmd_help; exit 1 ;;
+  setup)   cmd_setup ;;
+  start)   cmd_start ;;
+  stop)    cmd_stop  ;;
+  logs)    cmd_logs "${2:-}" ;;
+  destroy) cmd_destroy ;;
+  help)    cmd_help  ;;
+  *)       err "Unknown command: $1"; cmd_help; exit 1 ;;
 esac
