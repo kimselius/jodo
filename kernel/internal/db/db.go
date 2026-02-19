@@ -104,6 +104,57 @@ func RunMigrations(db *sql.DB) error {
 				ALTER TABLE chat_messages ADD COLUMN read_at TIMESTAMPTZ;
 			END IF;
 		END $$`,
+
+		// Configuration tables (config-in-DB)
+		`CREATE TABLE IF NOT EXISTS system_config (
+			key        VARCHAR(100) PRIMARY KEY,
+			value      TEXT NOT NULL,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS secrets (
+			key              VARCHAR(100) PRIMARY KEY,
+			value_encrypted  BYTEA NOT NULL,
+			created_at       TIMESTAMPTZ DEFAULT NOW(),
+			updated_at       TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS providers (
+			name              VARCHAR(50) PRIMARY KEY,
+			enabled           BOOLEAN NOT NULL DEFAULT true,
+			api_key_encrypted BYTEA,
+			base_url          TEXT,
+			monthly_budget    DECIMAL(10,2) DEFAULT 0,
+			emergency_reserve DECIMAL(10,2) DEFAULT 0,
+			created_at        TIMESTAMPTZ DEFAULT NOW(),
+			updated_at        TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS provider_models (
+			id                 SERIAL PRIMARY KEY,
+			provider_name      VARCHAR(50) NOT NULL REFERENCES providers(name) ON DELETE CASCADE,
+			model_key          VARCHAR(100) NOT NULL,
+			model_name         VARCHAR(100) NOT NULL,
+			input_cost_per_1m  DECIMAL(10,4) DEFAULT 0,
+			output_cost_per_1m DECIMAL(10,4) DEFAULT 0,
+			capabilities       TEXT[] DEFAULT '{}',
+			quality            INTEGER DEFAULT 5,
+			enabled            BOOLEAN DEFAULT true,
+			UNIQUE(provider_name, model_key)
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS genesis (
+			id                 INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+			name               VARCHAR(100) NOT NULL DEFAULT 'Jodo',
+			version            INTEGER NOT NULL DEFAULT 0,
+			purpose            TEXT NOT NULL DEFAULT '',
+			survival_instincts TEXT[] DEFAULT '{}',
+			capabilities_api   JSONB DEFAULT '{}',
+			capabilities_local TEXT[] DEFAULT '{}',
+			first_tasks        TEXT[] DEFAULT '{}',
+			hints              TEXT[] DEFAULT '{}',
+			updated_at         TIMESTAMPTZ DEFAULT NOW()
+		)`,
 	}
 
 	for _, m := range migrations {

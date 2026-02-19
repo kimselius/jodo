@@ -208,6 +208,35 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	}, nil
 }
 
+// Reconfigure swaps the provider and routing config without restarting the kernel.
+// This is called when settings are changed via the UI.
+func (p *Proxy) Reconfigure(providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) {
+	providers := make(map[string]Provider)
+	for name, cfg := range providerConfigs {
+		switch name {
+		case "claude":
+			if cfg.APIKey != "" {
+				providers[name] = NewClaudeProvider(cfg)
+			}
+		case "openai":
+			if cfg.APIKey != "" {
+				providers[name] = NewOpenAIProvider(cfg)
+			}
+		case "ollama":
+			providers[name] = NewOllamaProvider(cfg)
+		}
+	}
+
+	budget := NewBudgetTracker(p.Budget.db, providerConfigs)
+	router := NewRouter(providers, providerConfigs, routing, budget)
+
+	p.Router = router
+	p.Budget = budget
+	p.configs = providerConfigs
+
+	log.Printf("[llm] reconfigured with %d providers", len(providers))
+}
+
 // Embed generates an embedding vector for the given text.
 func (p *Proxy) Embed(ctx context.Context, text string) (*EmbedResponse, error) {
 	route, err := p.Router.RouteEmbed()

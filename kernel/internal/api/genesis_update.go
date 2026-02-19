@@ -2,11 +2,9 @@ package api
 
 import (
 	"net/http"
-	"os"
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
 )
 
 var genesisWriteMu sync.Mutex
@@ -17,6 +15,18 @@ type identityUpdateRequest struct {
 }
 
 func (s *Server) handleGenesisIdentityGet(c *gin.Context) {
+	if s.ConfigStore != nil {
+		genesis, err := s.ConfigStore.LoadGenesis()
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"name":    genesis.Identity.Name,
+				"version": genesis.Identity.Version,
+				"purpose": genesis.Purpose,
+			})
+			return
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"name":    s.Genesis.Identity.Name,
 		"version": s.Genesis.Identity.Version,
@@ -39,45 +49,34 @@ func (s *Server) handleGenesisIdentityPut(c *gin.Context) {
 	genesisWriteMu.Lock()
 	defer genesisWriteMu.Unlock()
 
-	// Read current file
-	data, err := os.ReadFile(s.GenesisPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "read genesis failed"})
-		return
+	// Write to DB
+	if s.ConfigStore != nil {
+		genesis, err := s.ConfigStore.LoadGenesis()
+		if err == nil {
+			if req.Name != nil && *req.Name != "" {
+				genesis.Identity.Name = *req.Name
+			}
+			if req.Purpose != nil {
+				genesis.Purpose = *req.Purpose
+			}
+
+			if err := s.ConfigStore.SaveGenesis(genesis); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "save genesis failed"})
+				return
+			}
+
+			s.Genesis = genesis
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+			return
+		}
 	}
 
-	// Parse into a map to preserve all fields
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "parse genesis failed"})
-		return
-	}
-
-	// Apply updates
-	identity, _ := raw["identity"].(map[string]interface{})
-	if identity == nil {
-		identity = make(map[string]interface{})
-	}
-
+	// Fallback: update in-memory only
 	if req.Name != nil && *req.Name != "" {
-		identity["name"] = *req.Name
 		s.Genesis.Identity.Name = *req.Name
 	}
 	if req.Purpose != nil {
-		raw["purpose"] = *req.Purpose
 		s.Genesis.Purpose = *req.Purpose
-	}
-	raw["identity"] = identity
-
-	// Write back
-	out, err := yaml.Marshal(raw)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "marshal genesis failed"})
-		return
-	}
-	if err := os.WriteFile(s.GenesisPath, out, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "write genesis failed"})
-		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true})

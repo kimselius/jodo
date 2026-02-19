@@ -1,0 +1,106 @@
+<script setup lang="ts">
+import Card from '@/components/ui/Card.vue'
+import Input from '@/components/ui/Input.vue'
+import Button from '@/components/ui/Button.vue'
+
+const props = defineProps<{
+  vps: {
+    host: string
+    sshUser: string
+    publicKey: string
+    verified: boolean
+    verifying: boolean
+    generating: boolean
+  }
+  error: string | null
+}>()
+
+const emit = defineEmits<{
+  generate: []
+  verify: []
+  next: []
+}>()
+
+function copyPublicKey() {
+  navigator.clipboard.writeText(props.vps.publicKey)
+}
+</script>
+
+<template>
+  <div class="space-y-6">
+    <div>
+      <h2 class="text-lg font-semibold">VPS Connection</h2>
+      <p class="text-sm text-muted-foreground mt-1">
+        Connect to the server where Jodo will live. The kernel will SSH into this server to deploy and manage Jodo.
+      </p>
+    </div>
+
+    <Card class="p-4 space-y-4">
+      <div>
+        <label class="text-sm font-medium mb-1.5 block">Jodo VPS IP Address</label>
+        <Input v-model="vps.host" placeholder="123.45.67.89" />
+      </div>
+
+      <div>
+        <label class="text-sm font-medium mb-1.5 block">SSH User</label>
+        <Input v-model="vps.sshUser" placeholder="root" />
+      </div>
+    </Card>
+
+    <Card class="p-4 space-y-4">
+      <div>
+        <h3 class="text-sm font-medium">SSH Key</h3>
+        <p class="text-xs text-muted-foreground mt-0.5">
+          Generate an SSH key pair. The private key is stored encrypted in the database.
+        </p>
+      </div>
+
+      <Button
+        @click="$emit('generate')"
+        :disabled="vps.generating"
+        variant="secondary"
+      >
+        {{ vps.generating ? 'Generating...' : vps.publicKey ? 'Regenerate SSH Key' : 'Generate SSH Key' }}
+      </Button>
+
+      <div v-if="vps.publicKey" class="space-y-2">
+        <label class="text-sm font-medium block">Public Key</label>
+        <div class="relative">
+          <pre class="text-xs bg-muted rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono">{{ vps.publicKey }}</pre>
+          <button
+            @click="copyPublicKey"
+            class="absolute top-2 right-2 text-xs text-muted-foreground hover:text-foreground bg-muted-foreground/10 rounded px-2 py-1"
+          >
+            Copy
+          </button>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          Add this public key to <code class="text-foreground">~/.ssh/authorized_keys</code> on the Jodo VPS, then click Verify.
+        </p>
+      </div>
+    </Card>
+
+    <div v-if="vps.publicKey" class="flex items-center gap-3">
+      <Button
+        @click="$emit('verify')"
+        :disabled="vps.verifying || !vps.host"
+        variant="secondary"
+      >
+        {{ vps.verifying ? 'Verifying...' : 'Verify Connection' }}
+      </Button>
+
+      <span v-if="vps.verified" class="text-sm text-green-500 font-medium">
+        Connected successfully
+      </span>
+    </div>
+
+    <div class="flex justify-end pt-4">
+      <Button
+        @click="$emit('next')"
+        :disabled="!vps.verified"
+      >
+        Next
+      </Button>
+    </div>
+  </div>
+</template>

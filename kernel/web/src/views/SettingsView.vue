@@ -1,20 +1,45 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useGenesis } from '@/composables/useGenesis'
-import IdentityForm from '@/components/settings/IdentityForm.vue'
-import Card from '@/components/ui/Card.vue'
-import type { IdentityUpdate } from '@/types/genesis'
+import { ref, onMounted } from 'vue'
+import { useSettings } from '@/composables/useSettings'
+import GenesisTab from '@/components/settings/GenesisTab.vue'
+import ProvidersTab from '@/components/settings/ProvidersTab.vue'
+import RoutingTab from '@/components/settings/RoutingTab.vue'
+import KernelTab from '@/components/settings/KernelTab.vue'
+import VPSTab from '@/components/settings/VPSTab.vue'
 
-const { genesis, loading, saving, error, updateIdentity } = useGenesis()
+const {
+  providers,
+  genesis,
+  routing,
+  kernel,
+  ssh,
+  loading,
+  error,
+  saved,
+  loadAll,
+  loadProviders,
+  loadGenesis,
+  loadRouting,
+  loadKernel,
+  loadSSH,
+  showSaved,
+} = useSettings()
 
-const saved = ref(false)
+const activeTab = ref('genesis')
 
-async function handleSave(update: IdentityUpdate) {
-  const ok = await updateIdentity(update)
-  if (ok) {
-    saved.value = true
-    setTimeout(() => { saved.value = false }, 3000)
-  }
+const tabs = [
+  { key: 'genesis', label: 'Identity' },
+  { key: 'providers', label: 'Providers' },
+  { key: 'routing', label: 'Routing' },
+  { key: 'kernel', label: 'Kernel' },
+  { key: 'vps', label: 'VPS' },
+]
+
+onMounted(() => loadAll())
+
+function handleSaved(reloadFn?: () => Promise<void>) {
+  showSaved()
+  if (reloadFn) reloadFn()
 }
 </script>
 
@@ -24,44 +49,63 @@ async function handleSave(update: IdentityUpdate) {
       <h1 class="text-lg font-semibold">Settings</h1>
 
       <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-      <p v-if="saved" class="text-sm text-success">Saved successfully.</p>
+      <p v-if="saved" class="text-sm text-green-500">Saved successfully.</p>
+
+      <!-- Tabs -->
+      <div class="flex gap-1 border-b border-border">
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          @click="activeTab = tab.key"
+          class="px-3 py-2 text-sm font-medium transition-colors relative"
+          :class="[
+            activeTab === tab.key
+              ? 'text-foreground'
+              : 'text-muted-foreground hover:text-foreground',
+          ]"
+        >
+          {{ tab.label }}
+          <span
+            v-if="activeTab === tab.key"
+            class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+          />
+        </button>
+      </div>
 
       <div v-if="loading" class="flex items-center justify-center py-12">
         <span class="text-sm text-muted-foreground">Loading...</span>
       </div>
 
-      <template v-else-if="genesis">
-        <IdentityForm :genesis="genesis" :saving="saving" @save="handleSave" />
+      <template v-else>
+        <GenesisTab
+          v-if="activeTab === 'genesis' && genesis"
+          :genesis="genesis"
+          @saved="handleSaved(loadGenesis)"
+        />
 
-        <!-- Survival Instincts (read-only) -->
-        <Card class="p-4">
-          <h3 class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
-            Survival Instincts
-          </h3>
-          <ul class="space-y-2">
-            <li
-              v-for="(instinct, i) in genesis.survival_instincts"
-              :key="i"
-              class="text-sm text-muted-foreground flex gap-2"
-            >
-              <span class="text-primary shrink-0">&#8226;</span>
-              <span>{{ instinct }}</span>
-            </li>
-          </ul>
-        </Card>
+        <ProvidersTab
+          v-if="activeTab === 'providers'"
+          :providers="providers"
+          @saved="handleSaved(loadProviders)"
+        />
 
-        <!-- Version info -->
-        <Card class="p-4">
-          <h3 class="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
-            Info
-          </h3>
-          <div class="space-y-2 text-sm text-muted-foreground">
-            <div class="flex justify-between">
-              <span>Version</span>
-              <span class="font-mono">{{ genesis.identity.version }}</span>
-            </div>
-          </div>
-        </Card>
+        <RoutingTab
+          v-if="activeTab === 'routing' && routing"
+          :routing="routing"
+          @saved="handleSaved(loadRouting)"
+        />
+
+        <KernelTab
+          v-if="activeTab === 'kernel' && kernel"
+          :kernel="kernel"
+          @saved="handleSaved(loadKernel)"
+        />
+
+        <VPSTab
+          v-if="activeTab === 'vps' && ssh"
+          :ssh="ssh"
+          @saved="handleSaved(loadSSH)"
+        />
       </template>
     </div>
   </div>

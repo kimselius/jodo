@@ -133,6 +133,12 @@ func (h *HealthChecker) handleFail(status string, responseTimeMs int, detail str
 	log.Printf("[health] fail #%d: %s (%dms)", count, detail, responseTimeMs)
 	h.logToDB(status, responseTimeMs, fmt.Sprintf(`{"detail": %q}`, detail))
 
+	// Don't escalate during post-restart grace period — seed.py needs time to boot
+	if h.manager.InGracePeriod() {
+		log.Printf("[health] in grace period, skipping escalation")
+		return
+	}
+
 	if h.onEscalate != nil {
 		h.onEscalate(count)
 	}

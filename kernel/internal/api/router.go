@@ -2,10 +2,12 @@ package api
 
 import (
 	"database/sql"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"jodo-kernel/internal/audit"
 	"jodo-kernel/internal/config"
+	"jodo-kernel/internal/crypto"
 	"jodo-kernel/internal/git"
 	"jodo-kernel/internal/growth"
 	"jodo-kernel/internal/llm"
@@ -15,19 +17,39 @@ import (
 
 // Server holds all dependencies for the API handlers.
 type Server struct {
-	Config      *config.Config
-	Genesis     *config.Genesis
-	GenesisPath string // path to genesis.yaml on disk
-	LLM         *llm.Proxy
-	Memory      *memory.Store
-	Searcher    *memory.Searcher
-	Process     *process.Manager
-	Git         *git.Manager
-	Growth      *growth.Logger
-	Audit       *audit.Logger
-	DB          *sql.DB
-	ChatHub     *ChatHub
-	WS          *WSHub
+	Config    *config.Config
+	Genesis   *config.Genesis
+	LLM       *llm.Proxy
+	Memory    *memory.Store
+	Searcher  *memory.Searcher
+	Process   *process.Manager
+	Git       *git.Manager
+	Growth    *growth.Logger
+	Audit     *audit.Logger
+	DB        *sql.DB
+	ChatHub   *ChatHub
+	WS        *WSHub
+
+	// Config-in-DB
+	ConfigStore   *config.DBStore
+	Encryptor     *crypto.Encryptor
+	SetupComplete bool
+	OnBirth       func() error // called by setup wizard to birth Jodo
+}
+
+// requireSetupComplete returns 503 if setup hasn't been completed yet.
+func (s *Server) requireSetupComplete() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !s.SetupComplete {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "setup_not_complete",
+				"message": "Complete the setup wizard first",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 // SetupRouter creates and configures the Gin router with all API routes.
@@ -39,7 +61,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -48,30 +70,63 @@ func (s *Server) SetupRouter() *gin.Engine {
 		c.Next()
 	})
 
-	// API routes
 	api := r.Group("/api")
+
+	// Setup endpoints — always accessible
+	setup := api.Group("/setup")
 	{
-		api.POST("/think", s.handleThink)
-		api.POST("/memory/store", s.handleMemoryStore)
-		api.POST("/memory/search", s.handleMemorySearch)
-		api.GET("/budget", s.handleBudget)
-		api.GET("/status", s.handleStatus)
-		api.GET("/genesis", s.handleGenesis)
-		api.POST("/commit", s.handleCommit)
-		api.POST("/restart", s.handleRestart)
-		api.POST("/rollback", s.handleRollback)
-		api.GET("/history", s.handleHistory)
-		api.POST("/log", s.handleLog)
-		api.POST("/chat", s.handleChatPost)
-		api.GET("/chat", s.handleChatGet)
-		api.GET("/chat/stream", s.handleChatStream)
-		api.POST("/chat/ack", s.handleChatAck)
-		api.GET("/genesis/identity", s.handleGenesisIdentityGet)
-		api.PUT("/genesis/identity", s.handleGenesisIdentityPut)
-		api.GET("/memories", s.handleMemoriesList)
-		api.GET("/growth", s.handleGrowthLog)
-		api.POST("/heartbeat", s.handleHeartbeat)
-		api.GET("/ws", s.handleWS)
+		setup.GET("/status", s.handleSetupStatus)
+		setup.POST("/ssh/generate", s.handleSetupSSHGenerate)
+		setup.POST("/ssh/verify", s.handleSetupSSHVerify)
+		setup.POST("/providers", s.handleSetupProviders)
+		setup.POST("/genesis", s.handleSetupGenesis)
+		setup.POST("/test-provider", s.handleSetupTestProvider)
+		setup.POST("/birth", s.handleSetupBirth)
+		setup.POST("/config", s.handleSetupConfig)
+	}
+
+	// Settings endpoints — require setup complete
+	settings := api.Group("/settings", s.requireSetupComplete())
+	{
+		settings.GET("/providers", s.handleSettingsProvidersGet)
+		settings.PUT("/providers/:name", s.handleSettingsProviderPut)
+		settings.POST("/providers/:name/models", s.handleSettingsModelAdd)
+		settings.DELETE("/providers/:name/models/:key", s.handleSettingsModelDelete)
+		settings.GET("/genesis", s.handleSettingsGenesisGet)
+		settings.PUT("/genesis", s.handleSettingsGenesisPut)
+		settings.GET("/routing", s.handleSettingsRoutingGet)
+		settings.PUT("/routing", s.handleSettingsRoutingPut)
+		settings.GET("/kernel", s.handleSettingsKernelGet)
+		settings.PUT("/kernel", s.handleSettingsKernelPut)
+		settings.GET("/ssh", s.handleSettingsSSHGet)
+		settings.POST("/ssh/generate", s.handleSetupSSHGenerate)
+		settings.POST("/ssh/verify", s.handleSetupSSHVerify)
+	}
+
+	// Operational endpoints — require setup complete
+	ops := api.Group("", s.requireSetupComplete())
+	{
+		ops.POST("/think", s.handleThink)
+		ops.POST("/memory/store", s.handleMemoryStore)
+		ops.POST("/memory/search", s.handleMemorySearch)
+		ops.GET("/budget", s.handleBudget)
+		ops.GET("/status", s.handleStatus)
+		ops.GET("/genesis", s.handleGenesis)
+		ops.POST("/commit", s.handleCommit)
+		ops.POST("/restart", s.handleRestart)
+		ops.POST("/rollback", s.handleRollback)
+		ops.GET("/history", s.handleHistory)
+		ops.POST("/log", s.handleLog)
+		ops.POST("/chat", s.handleChatPost)
+		ops.GET("/chat", s.handleChatGet)
+		ops.GET("/chat/stream", s.handleChatStream)
+		ops.POST("/chat/ack", s.handleChatAck)
+		ops.GET("/genesis/identity", s.handleGenesisIdentityGet)
+		ops.PUT("/genesis/identity", s.handleGenesisIdentityPut)
+		ops.GET("/memories", s.handleMemoriesList)
+		ops.GET("/growth", s.handleGrowthLog)
+		ops.POST("/heartbeat", s.handleHeartbeat)
+		ops.GET("/ws", s.handleWS)
 	}
 
 	return r

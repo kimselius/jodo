@@ -152,9 +152,6 @@ func (c *Config) validate() error {
 	if c.Kernel.MaxRestartAttempts == 0 {
 		c.Kernel.MaxRestartAttempts = 3
 	}
-	if c.Jodo.Host == "" || strings.Contains(c.Jodo.Host, "${") {
-		return fmt.Errorf("jodo.host must be set to Jodo's IP address (set JODO_IP env var)")
-	}
 	if c.Jodo.Port == 0 {
 		c.Jodo.Port = 9001
 	}
@@ -170,8 +167,29 @@ func (c *Config) validate() error {
 	if c.Database.Port == 0 {
 		c.Database.Port = 5432
 	}
-	if len(c.Providers) == 0 {
-		return fmt.Errorf("at least one provider must be configured")
-	}
 	return nil
+}
+
+// LoadDatabaseConfig loads only the database configuration from environment variables.
+// This is the bootstrap config needed before the DB is available.
+func LoadDatabaseConfig() DatabaseConfig {
+	port := 5432
+	if v := os.Getenv("DB_PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &port)
+	}
+
+	return DatabaseConfig{
+		Host:     envOrDefault("DB_HOST", "postgres"),
+		Port:     port,
+		User:     envOrDefault("DB_USER", "jodo"),
+		Password: os.Getenv("JODO_DB_PASSWORD"),
+		Name:     envOrDefault("DB_NAME", "jodo_kernel"),
+	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

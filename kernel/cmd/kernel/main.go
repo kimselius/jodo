@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 	"jodo-kernel/internal/api"
 	"jodo-kernel/internal/audit"
 	"jodo-kernel/internal/config"
-	"database/sql"
+	"jodo-kernel/internal/crypto"
 	"jodo-kernel/internal/db"
 	"jodo-kernel/internal/git"
 	"jodo-kernel/internal/growth"
@@ -32,24 +33,14 @@ func main() {
 	log.Println("  JODO KERNEL — booting...")
 	log.Println("========================================")
 
-	// 1. Load configuration
-	configPath := envOr("KERNEL_CONFIG", "/app/configs/config.yaml")
-	genesisPath := envOr("KERNEL_GENESIS", "/app/configs/genesis.yaml")
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		log.Fatalf("[boot] config: %v", err)
+	// 1. Bootstrap: load DB config from env (chicken-and-egg)
+	dbCfg := config.LoadDatabaseConfig()
+	if dbCfg.Password == "" {
+		log.Fatal("[boot] JODO_DB_PASSWORD not set. Run './jodo.sh setup' first.")
 	}
-	log.Printf("[boot] config loaded (port %d, %d providers)", cfg.Kernel.Port, len(cfg.Providers))
-
-	genesis, err := config.LoadGenesis(genesisPath)
-	if err != nil {
-		log.Fatalf("[boot] genesis: %v", err)
-	}
-	log.Printf("[boot] genesis loaded: %s v%d", genesis.Identity.Name, genesis.Identity.Version)
 
 	// 2. Connect to Postgres
-	database, err := db.Connect(cfg.Database)
+	database, err := db.Connect(dbCfg)
 	if err != nil {
 		log.Fatalf("[boot] database: %v", err)
 	}
@@ -61,11 +52,52 @@ func main() {
 	}
 	log.Println("[boot] migrations complete")
 
-	// 3. Initialize subsystems
+	// 3. Initialize encryptor
+	encryptor, err := crypto.NewFromEnv()
+	if err != nil {
+		log.Fatalf("[boot] encryption: %v", err)
+	}
+	log.Println("[boot] encryptor ready")
+
+	// 4. Create config store
+	configStore := config.NewDBStore(database, encryptor)
+
+	// 5. Check setup status
+	setupComplete := configStore.IsSetupComplete()
+
+	if !setupComplete {
+		// Try auto-migration from YAML
+		setupComplete = autoMigrateYAML(configStore, database)
+	}
+
+	// 6. Create server — either in setup mode or fully operational
+	if setupComplete {
+		log.Println("[boot] setup complete — starting in operational mode")
+		startOperational(database, dbCfg, configStore, encryptor)
+	} else {
+		log.Println("[boot] setup not complete — starting in setup mode")
+		startSetupMode(database, dbCfg, configStore, encryptor)
+	}
+}
+
+// startOperational boots the kernel with all subsystems (normal mode).
+func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) {
+	cfg, err := configStore.LoadFullConfig(dbCfg)
+	if err != nil {
+		log.Fatalf("[boot] load config from DB: %v", err)
+	}
+	log.Printf("[boot] config loaded from DB (port %d, %d providers)", cfg.Kernel.Port, len(cfg.Providers))
+
+	genesis, err := configStore.LoadGenesis()
+	if err != nil {
+		log.Fatalf("[boot] load genesis from DB: %v", err)
+	}
+	log.Printf("[boot] genesis loaded: %s v%d", genesis.Identity.Name, genesis.Identity.Version)
+
+	// Initialize subsystems
 	proxy := llm.NewProxy(database, cfg.Providers, cfg.Routing)
 	log.Println("[boot] LLM proxy ready")
 
-	// Audit logger — records every prompt/response for safety review
 	if cfg.Kernel.AuditLogPath != "" {
 		auditLogger, err := audit.NewLogger(cfg.Kernel.AuditLogPath)
 		if err != nil {
@@ -83,17 +115,24 @@ func main() {
 	kernelURL := cfg.Kernel.ExternalURL
 	if kernelURL == "" {
 		kernelURL = fmt.Sprintf("http://localhost:%d", cfg.Kernel.Port)
-		log.Printf("[boot] WARNING: kernel.external_url not set — using %s (won't work across VPS)", kernelURL)
+		log.Printf("[boot] WARNING: kernel.external_url not set — using %s", kernelURL)
 	}
+
+	// Write SSH key to temp file for process manager
+	sshKeyPath, err := writeSSHKeyToTemp(configStore)
+	if err != nil {
+		log.Printf("[boot] WARNING: SSH key not available: %v (Jodo boot will fail)", err)
+	}
+	cfg.Jodo.SSHKeyPath = sshKeyPath
+
 	procManager := process.NewManager(cfg.Jodo, kernelURL)
 	gitManager := git.NewManager(cfg.Jodo, procManager.RunSSH)
 	growthLogger := growth.NewLogger(database)
 
-	// 4. Set up API server
+	// Set up API server
 	chatHub := api.NewChatHub()
 	wsHub := api.NewWSHub()
 
-	// Wire growth logger to broadcast events via WebSocket
 	growthLogger.OnEvent = func(event, note, gitHash string) {
 		wsHub.Broadcast("growth", map[string]string{
 			"event":    event,
@@ -103,62 +142,46 @@ func main() {
 	}
 
 	server := &api.Server{
-		Config:      cfg,
-		Genesis:     genesis,
-		GenesisPath: genesisPath,
-		LLM:         proxy,
-		Memory:      memStore,
-		Searcher:    memSearcher,
-		Process:     procManager,
-		Git:         gitManager,
-		Growth:      growthLogger,
-		Audit:       proxy.Audit,
-		DB:          database,
-		ChatHub:     chatHub,
-		WS:          wsHub,
+		Config:        cfg,
+		Genesis:       genesis,
+		LLM:           proxy,
+		Memory:        memStore,
+		Searcher:      memSearcher,
+		Process:       procManager,
+		Git:           gitManager,
+		Growth:        growthLogger,
+		Audit:         proxy.Audit,
+		DB:            database,
+		ChatHub:       chatHub,
+		WS:            wsHub,
+		ConfigStore:   configStore,
+		Encryptor:     encryptor,
+		SetupComplete: true,
 	}
 
 	router := server.SetupRouter()
 
-	// Serve Vue SPA (built frontend)
+	// Serve Vue SPA
 	webDir := envOr("WEB_DIR", "/app/web")
-	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
-		router.Static("/assets", webDir+"/assets")
-		router.StaticFile("/favicon.svg", webDir+"/favicon.svg")
-		router.StaticFile("/favicon.ico", webDir+"/favicon.ico")
+	serveSPA(router, webDir)
 
-		// SPA fallback: serve index.html for all non-API routes
-		indexPath := webDir + "/index.html"
-		router.NoRoute(func(c *gin.Context) {
-			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-				c.JSON(404, gin.H{"error": "not found"})
-				return
-			}
-			c.File(indexPath)
-		})
-		log.Printf("[boot] serving SPA from %s", webDir)
-	} else {
-		log.Printf("[boot] no web directory at %s — SPA disabled", webDir)
-	}
-
-	// 5. Boot Jodo on VPS 2
-	go bootJodo(cfg, procManager, gitManager, growthLogger)
-
-	// 6. Start health checker with recovery
+	// Boot Jodo + health checker
 	healthChecker := process.NewHealthChecker(cfg.Jodo, cfg.Kernel, procManager, database)
 	recovery := process.NewRecovery(procManager, gitManager, growthLogger, seedPath(), cfg.Kernel.MaxRestartAttempts)
 	healthChecker.SetEscalationHandler(recovery.HandleFailure)
-	healthChecker.Start()
 
-	// 7. Start periodic maintenance
+	go func() {
+		bootJodo(cfg, procManager, gitManager, growthLogger)
+		log.Println("[boot] waiting 30s for seed.py to initialize...")
+		time.Sleep(30 * time.Second)
+		healthChecker.Start()
+	}()
+
 	go maintenanceLoop(cfg, database, gitManager, procManager, growthLogger)
 
-	// 8. Start HTTP server
+	// Start server
 	addr := fmt.Sprintf(":%d", cfg.Kernel.Port)
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: router,
-	}
+	srv := &http.Server{Addr: addr, Handler: router}
 
 	go func() {
 		log.Printf("[boot] API server listening on %s", addr)
@@ -170,39 +193,222 @@ func main() {
 	growthLogger.Log("boot", "Kernel started", "", nil)
 	log.Println("[boot] Jodo Kernel is alive.")
 
-	// 9. Graceful shutdown
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("[shutdown] signal received, shutting down...")
 	healthChecker.Stop()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+	log.Println("[shutdown] Jodo Kernel stopped.")
+}
 
-	log.Println("[shutdown] Jodo Kernel stopped. Jodo continues to run independently.")
+// startSetupMode starts the kernel in setup mode (wizard UI, no Jodo boot).
+func startSetupMode(database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) {
+	server := &api.Server{
+		DB:            database,
+		ConfigStore:   configStore,
+		Encryptor:     encryptor,
+		SetupComplete: false,
+		// Subsystems are nil — operational routes will return 503
+	}
+
+	router := server.SetupRouter()
+
+	// Serve Vue SPA
+	webDir := envOr("WEB_DIR", "/app/web")
+	serveSPA(router, webDir)
+
+	port := 8080 // default port during setup
+	addr := fmt.Sprintf(":%d", port)
+	srv := &http.Server{Addr: addr, Handler: router}
+
+	// Provide callback for birth
+	server.OnBirth = func() error {
+		return birthJodo(server, database, dbCfg, configStore, encryptor)
+	}
+
+	go func() {
+		log.Printf("[boot] Setup wizard listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("[boot] server: %v", err)
+		}
+	}()
+
+	log.Println("[boot] Waiting for setup to complete via UI...")
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("[shutdown] signal received, shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+}
+
+// birthJodo is called when the user clicks "Birth Jodo" in the setup wizard.
+// It initializes all subsystems and boots Jodo.
+func birthJodo(server *api.Server, database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) error {
+	log.Println("[birth] initializing subsystems...")
+
+	cfg, err := configStore.LoadFullConfig(dbCfg)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	genesis, err := configStore.LoadGenesis()
+	if err != nil {
+		return fmt.Errorf("load genesis: %w", err)
+	}
+
+	proxy := llm.NewProxy(database, cfg.Providers, cfg.Routing)
+	if cfg.Kernel.AuditLogPath != "" {
+		if auditLogger, err := audit.NewLogger(cfg.Kernel.AuditLogPath); err == nil {
+			proxy.Audit = auditLogger
+		}
+	}
+
+	memStore := memory.NewStore(database, proxy)
+	memSearcher := memory.NewSearcher(database, proxy)
+
+	kernelURL := cfg.Kernel.ExternalURL
+	if kernelURL == "" {
+		kernelURL = fmt.Sprintf("http://localhost:%d", cfg.Kernel.Port)
+	}
+
+	sshKeyPath, err := writeSSHKeyToTemp(configStore)
+	if err != nil {
+		return fmt.Errorf("SSH key: %w", err)
+	}
+	cfg.Jodo.SSHKeyPath = sshKeyPath
+
+	procManager := process.NewManager(cfg.Jodo, kernelURL)
+	gitManager := git.NewManager(cfg.Jodo, procManager.RunSSH)
+	growthLogger := growth.NewLogger(database)
+
+	chatHub := api.NewChatHub()
+	wsHub := api.NewWSHub()
+	growthLogger.OnEvent = func(event, note, gitHash string) {
+		wsHub.Broadcast("growth", map[string]string{
+			"event": event, "note": note, "git_hash": gitHash,
+		})
+	}
+
+	// Wire everything into the server
+	server.Config = cfg
+	server.Genesis = genesis
+	server.LLM = proxy
+	server.Memory = memStore
+	server.Searcher = memSearcher
+	server.Process = procManager
+	server.Git = gitManager
+	server.Growth = growthLogger
+	server.Audit = proxy.Audit
+	server.ChatHub = chatHub
+	server.WS = wsHub
+	server.SetupComplete = true
+
+	// Boot Jodo
+	go func() {
+		bootJodo(cfg, procManager, gitManager, growthLogger)
+		healthChecker := process.NewHealthChecker(cfg.Jodo, cfg.Kernel, procManager, database)
+		recovery := process.NewRecovery(procManager, gitManager, growthLogger, seedPath(), cfg.Kernel.MaxRestartAttempts)
+		healthChecker.SetEscalationHandler(recovery.HandleFailure)
+
+		log.Println("[birth] waiting 30s for seed.py to initialize...")
+		time.Sleep(30 * time.Second)
+		healthChecker.Start()
+
+		go maintenanceLoop(cfg, database, gitManager, procManager, growthLogger)
+	}()
+
+	growthLogger.Log("birth", "Jodo was born!", "", nil)
+	log.Println("[birth] Jodo is being born!")
+	return nil
+}
+
+// writeSSHKeyToTemp reads the SSH private key from the DB and writes it to a temp file.
+func writeSSHKeyToTemp(store *config.DBStore) (string, error) {
+	key, err := store.GetSecret("ssh_private_key")
+	if err != nil {
+		return "", fmt.Errorf("get ssh key from db: %w", err)
+	}
+	if key == "" {
+		return "", fmt.Errorf("no SSH key configured")
+	}
+
+	tmpFile, err := os.CreateTemp("", "jodo-ssh-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	if _, err := tmpFile.WriteString(key); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+	os.Chmod(tmpFile.Name(), 0600)
+	return tmpFile.Name(), nil
+}
+
+// autoMigrateYAML tries to import existing YAML config into the database.
+func autoMigrateYAML(store *config.DBStore, database *sql.DB) bool {
+	configPath := envOr("KERNEL_CONFIG", "/app/configs/config.yaml")
+	genesisPath := envOr("KERNEL_GENESIS", "/app/configs/genesis.yaml")
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		log.Printf("[boot] no valid YAML config at %s: %v", configPath, err)
+		return false
+	}
+
+	genesis, err := config.LoadGenesis(genesisPath)
+	if err != nil {
+		log.Printf("[boot] no valid genesis at %s: %v", genesisPath, err)
+		return false
+	}
+
+	// Only auto-migrate if YAML has meaningful provider config
+	if len(cfg.Providers) == 0 {
+		log.Println("[boot] YAML config has no providers — skipping auto-migration")
+		return false
+	}
+
+	log.Println("[boot] auto-migrating YAML config to database...")
+	if err := store.ImportConfig(cfg); err != nil {
+		log.Printf("[boot] auto-migration failed: %v", err)
+		return false
+	}
+	if err := store.ImportGenesis(genesis); err != nil {
+		log.Printf("[boot] genesis migration failed: %v", err)
+		return false
+	}
+	if err := store.SetConfig("setup_complete", "true"); err != nil {
+		log.Printf("[boot] failed to mark setup complete: %v", err)
+		return false
+	}
+
+	log.Println("[boot] YAML config migrated to database successfully")
+	return true
 }
 
 func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, growthLog *growth.Logger) {
 	log.Println("[boot] connecting to VPS 2...")
 
-	// Detect brain state: is this a normal restart or a rebirth?
 	hasGit := gitMgr.GitExists()
 	hasMainPy := gitMgr.MainPyExists()
 	hasGalla := gitMgr.GallaFileExists()
 	hasPreviousLife := hasGit || hasMainPy
 
 	if hasPreviousLife && !hasGalla {
-		// .git or main.py exists but no .galla file — inconsistent state.
-		// seed.py writes .galla every galla, so its absence means something
-		// went wrong. Wipe brain and let Jodo start fresh.
 		log.Printf("[boot] REBIRTH: previous life detected (git=%v, main.py=%v) but no .galla — wiping brain", hasGit, hasMainPy)
-
 		proc.StopAll()
 
-		// Backup before wipe (skip if > 250MB)
 		if backupPath, err := gitMgr.BackupBrain(250); err != nil {
 			log.Printf("[boot] backup skipped: %v", err)
 		} else {
@@ -215,17 +421,13 @@ func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, gr
 
 		growthLog.Log("rebirth", "Boot rebirth: previous life without .galla — backed up and wiped brain", "", nil)
 	} else {
-		// Normal boot — stop old seed.py but leave Jodo's apps alive
 		proc.StopSeed()
 	}
 
-	// Initialize git repo on VPS 2
 	if err := gitMgr.Init(); err != nil {
 		log.Printf("[boot] git init warning: %v", err)
 	}
 
-	// Deploy and start fresh seed.py — it IS Jodo's consciousness.
-	// seed.py detects .galla file and resumes the galla loop.
 	log.Println("[boot] deploying seed.py...")
 	if err := proc.StartSeed(seedPath()); err != nil {
 		log.Printf("[boot] seed failed: %v", err)
@@ -247,12 +449,10 @@ func maintenanceLoop(cfg *config.Config, database *sql.DB, gitMgr *git.Manager, 
 	var lastAppNudge time.Time
 
 	for range ticker.C {
-		// Prune old health checks
 		db.PruneOldHealthChecks(database)
 
 		status := proc.GetStatus()
 
-		// Check if Jodo's app (port 9000) is reachable
 		if status.Status == "running" && status.HealthCheckOK {
 			appURL := fmt.Sprintf("http://%s:%d/health", cfg.Jodo.Host, cfg.Jodo.AppPort)
 			resp, err := appClient.Get(appURL)
@@ -272,7 +472,6 @@ func maintenanceLoop(cfg *config.Config, database *sql.DB, gitMgr *git.Manager, 
 			}
 		}
 
-		// Auto-tag stable versions: if Jodo has been healthy 5+ minutes since last code change
 		if status.Status == "running" && status.HealthCheckOK {
 			ago, err := gitMgr.LastModifiedAgo()
 			if err == nil && ago > 5*time.Minute {
@@ -299,4 +498,24 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func serveSPA(router *gin.Engine, webDir string) {
+	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
+		router.Static("/assets", webDir+"/assets")
+		router.StaticFile("/favicon.svg", webDir+"/favicon.svg")
+		router.StaticFile("/favicon.ico", webDir+"/favicon.ico")
+
+		indexPath := webDir + "/index.html"
+		router.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				c.JSON(404, gin.H{"error": "not found"})
+				return
+			}
+			c.File(indexPath)
+		})
+		log.Printf("[boot] serving SPA from %s", webDir)
+	} else {
+		log.Printf("[boot] no web directory at %s — SPA disabled", webDir)
+	}
 }
