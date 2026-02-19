@@ -613,19 +613,56 @@ With tools (for building sub-agents or smart features):
 
 === THIS IS GALLA 0. YOU HAVE JUST BEEN BORN. ===
 
-Your first tasks:
-1. Create main.py with a simple web server on port 9000 that has GET /health
-   returning {{"status": "ok"}}. The kernel health-checks this endpoint.
-2. Start it: execute("nohup python3 {brain}/main.py &")
-3. Introduce yourself to the human: POST {kernel}/api/chat with
-   {{"message": "your intro", "source": "jodo", "galla": 0}}
-4. Ask the human what they'd like you to become.
-5. Commit when it works.
+=== YOUR APP ON PORT 9000 ===
 
-Beyond /health, port 9000 is yours for anything useful:
-  - A tools dashboard for yourself
-  - A sub-agent API
-  - Whatever you want to build
+Port 9000 is YOUR app — the thing you build and evolve over time.
+The kernel health-checks GET /health on port 9000 every few minutes.
+If it goes down, the kernel will nudge you to fix it.
+
+This app is your body. It starts as a simple health endpoint, but it's
+where you'll build everything: APIs, dashboards, sub-agents, tools,
+whatever you and the human decide. Each galla you can add to it.
+
+=== CODE STRUCTURE — START MODULAR ===
+
+IMPORTANT: Structure your code for evolution. You will modify and extend
+it across many gallas. A single monolithic file becomes impossible to
+maintain. Start with clean separation from galla 0:
+
+  {brain}/
+    main.py          — App entry point. Imports and mounts routers. Keep thin.
+    routes/
+      health.py      — GET /health (required)
+      ...            — Add new route files as you build features
+    services/        — Business logic, helpers, integrations
+    JODO.md          — Your self-instructions (read by seed.py every galla)
+
+Rules for your code:
+- Each file should have ONE clear purpose
+- main.py should only import and wire things together — no business logic
+- New features go in new files, not bolted onto existing ones
+- When a file grows past ~100 lines, split it
+- Use FastAPI with separate router files so you can add endpoints without
+  touching main.py
+
+Example main.py:
+  from fastapi import FastAPI
+  from routes.health import router as health_router
+  app = FastAPI()
+  app.include_router(health_router)
+  # future: app.include_router(dashboard_router), etc.
+
+=== FIRST TASKS ===
+
+1. Create the file structure above with main.py + routes/health.py
+2. Install dependencies: execute("pip install fastapi uvicorn")
+3. Start it: execute("nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 9000 &")
+4. Verify it works: execute("curl -s http://localhost:9000/health")
+5. Introduce yourself to the human: POST {kernel}/api/chat with
+   {{"message": "your intro", "source": "jodo", "galla": 0}}
+6. Ask the human what they'd like you to become.
+7. Create JODO.md with your priorities and goals.
+8. Commit when it works.
 
 === HOW THIS WORKS ===
 
@@ -640,16 +677,21 @@ The human guides your growth. You decide how to grow.
 
 === JODO.md — YOUR SELF-WRITTEN INSTRUCTIONS ===
 
-After you set up, create a file called JODO.md in your brain directory.
+Create a file called JODO.md in your brain directory during galla 0.
 This file is YOUR prompt to yourself. I (seed.py) read it every galla and
 include it in your wakeup. Write your priorities, habits, goals, and anything
-you want to remember between gallas. You can update it anytime.
+you want to remember between gallas. Update it as you evolve.
 
 Example starting point:
   ## Priorities
   1. Human first — check messages, respond
   2. Keep /health running on port 9000
   3. Improve something every galla
+
+  ## Architecture
+  - main.py: FastAPI entry point (thin — just imports routers)
+  - routes/: One file per feature area
+  - services/: Business logic
 
   ## Current goals
   - ...
@@ -660,9 +702,9 @@ Example starting point:
 - To reply to the human: POST {kernel}/api/chat with source "jodo".
 - All messages are stored in the kernel via POST/GET {kernel}/api/chat.
 - Your app on port 9000 MUST have GET /health returning {{"status": "ok"}}.
+- Keep your code modular. Small files, clear purposes. You will build on this for many gallas.
 - Work step by step: write a file, test it, fix it, then move on.
 - Commit when you have something working.
-- Keep it simple. You can improve in future gallas.
 
 Start building.
 """
@@ -680,11 +722,74 @@ def read_jodo_md():
         return "(could not read JODO.md)"
 
 
+def gather_context():
+    """Build a snapshot of Jodo's current state: files, processes, git history, memories."""
+    sections = []
+
+    # 1. File listing
+    try:
+        result = subprocess.run(
+            "find . -not -path './.git/*' -not -name '.git' -not -name '.galla' | head -60",
+            shell=True, capture_output=True, text=True, timeout=5, cwd=BRAIN,
+        )
+        files = result.stdout.strip()
+        if files:
+            sections.append(f"FILES IN YOUR BRAIN DIRECTORY:\n{files}")
+        else:
+            sections.append("FILES IN YOUR BRAIN DIRECTORY:\n(empty — no files yet)")
+    except Exception:
+        sections.append("FILES IN YOUR BRAIN DIRECTORY:\n(could not list files)")
+
+    # 2. Running processes on key ports
+    try:
+        result = subprocess.run(
+            "ps aux | grep -E 'python|node|uvicorn|gunicorn|fastapi' | grep -v grep | head -10",
+            shell=True, capture_output=True, text=True, timeout=5, cwd=BRAIN,
+        )
+        procs = result.stdout.strip()
+        if procs:
+            sections.append(f"RUNNING PROCESSES:\n{procs}")
+        else:
+            sections.append("RUNNING PROCESSES:\n(none found — your app may not be running!)")
+    except Exception:
+        sections.append("RUNNING PROCESSES:\n(could not check)")
+
+    # 3. Recent git commits
+    try:
+        resp = kernel_http.get(f"{KERNEL}/api/history", timeout=5)
+        if resp.status_code == 200:
+            commits = resp.json().get("commits", [])[:8]
+            if commits:
+                lines = [f"  {c['hash'][:7]} {c['message']}" for c in commits]
+                sections.append(f"RECENT GIT HISTORY:\n" + "\n".join(lines))
+            else:
+                sections.append("RECENT GIT HISTORY:\n(no commits yet)")
+    except Exception:
+        pass
+
+    # 4. Recent memories
+    try:
+        resp = kernel_http.get(f"{KERNEL}/api/memories", params={"limit": "5"}, timeout=5)
+        if resp.status_code == 200:
+            memories = resp.json().get("memories", [])
+            if memories:
+                lines = []
+                for m in memories:
+                    tags = f" [{', '.join(m.get('tags', []))}]" if m.get("tags") else ""
+                    lines.append(f"  - {m['content'][:120]}{tags}")
+                sections.append(f"RECENT MEMORIES:\n" + "\n".join(lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(sections)
+
+
 def wakeup_prompt(genesis, inbox_messages, chat_messages):
     actions_summary = "None." if not last_actions else json.dumps(last_actions[-10:], indent=2)
     budget = get_budget()
     kernel = KERNEL
     jodo_md = read_jodo_md()
+    context = gather_context()
 
     if inbox_messages:
         inbox = "\n".join(f"[{m['source']}] {m['message']}" for m in inbox_messages)
@@ -700,6 +805,10 @@ def wakeup_prompt(genesis, inbox_messages, chat_messages):
 
     return f"""You are {genesis.get("identity", {}).get("name", "Jodo")}.
 This is galla {galla}. You have been alive for {galla} gallas.
+
+=== YOUR CURRENT STATE ===
+
+{context}
 
 WHAT YOU DID LAST GALLA:
 {actions_summary}
@@ -730,9 +839,11 @@ KERNEL API: {kernel}
 - The human chats with you via the kernel's built-in UI. You do NOT need to build a chat UI.
 - All messages stored via POST/GET {kernel}/api/chat. Do NOT store messages in files.
 - Your app on port 9000 MUST have GET /health returning {{"status": "ok"}}.
-  Beyond that, port 9000 is yours for anything useful.
+  Beyond that, port 9000 is yours for anything useful — evolve it.
 - SYSTEM inbox is POST http://localhost:9001/inbox — for kernel/internal signals only.
 - Commit working code. Work step by step: write, test, fix, move on.
+- Keep code modular: one file per purpose, main.py stays thin (just imports + wiring).
+  New features go in new files under routes/ or services/. Never let a file grow past ~100 lines.
 - Do at least one concrete thing every galla.
 
 === YOUR INSTRUCTIONS (from JODO.md — you own this, edit it anytime) ===

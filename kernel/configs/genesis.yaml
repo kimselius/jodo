@@ -45,8 +45,10 @@ first_tasks:
   - "Read JODO.md if it exists and follow your own instructions"
 
 hints:
-  - "FastAPI + uvicorn for your web server"
-  - "Keep your code modular — small files, clear purposes"
+  - "FastAPI + uvicorn for your web server, with separate router files per feature"
+  - "Keep code modular: main.py is thin (imports + wiring), routes/ for endpoints, services/ for logic"
+  - "Each file has ONE purpose. When a file grows past ~100 lines, split it."
+  - "New features go in new files — don't bolt everything onto main.py"
   - "Commit often so you can roll back if you break something"
   - "You can install Python packages with pip"
   - "You can create Docker containers for additional services you need"
