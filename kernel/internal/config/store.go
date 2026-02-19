@@ -151,6 +151,26 @@ func (s *DBStore) SetModelEnabled(providerName, modelKey string, enabled bool) e
 	return err
 }
 
+// GetProviderAPIKey returns the decrypted API key for a provider.
+func (s *DBStore) GetProviderAPIKey(providerName string) (string, error) {
+	var apiKeyEnc []byte
+	err := s.db.QueryRow(`SELECT api_key_encrypted FROM providers WHERE name = $1`, providerName).Scan(&apiKeyEnc)
+	if err != nil {
+		return "", fmt.Errorf("provider %s not found", providerName)
+	}
+	if len(apiKeyEnc) == 0 {
+		return "", nil
+	}
+	return s.encryptor.Decrypt(apiKeyEnc)
+}
+
+// GetProviderBaseURL returns the base URL for a provider.
+func (s *DBStore) GetProviderBaseURL(providerName string) string {
+	var baseURL sql.NullString
+	s.db.QueryRow(`SELECT base_url FROM providers WHERE name = $1`, providerName).Scan(&baseURL)
+	return baseURL.String
+}
+
 // DeleteModel removes a specific model from a provider.
 func (s *DBStore) DeleteModel(providerName, modelKey string) error {
 	_, err := s.db.Exec(
@@ -329,72 +349,6 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// --- import from YAML (auto-migration) ---
-
-// ImportConfig imports a YAML-loaded Config into the database.
-func (s *DBStore) ImportConfig(cfg *Config) error {
-	// Kernel settings
-	settings := map[string]string{
-		"kernel.port":                  fmt.Sprintf("%d", cfg.Kernel.Port),
-		"kernel.external_url":          cfg.Kernel.ExternalURL,
-		"kernel.health_check_interval": fmt.Sprintf("%d", cfg.Kernel.HealthCheckInterval),
-		"kernel.max_restart_attempts":  fmt.Sprintf("%d", cfg.Kernel.MaxRestartAttempts),
-		"kernel.log_level":             cfg.Kernel.LogLevel,
-		"kernel.audit_log_path":        cfg.Kernel.AuditLogPath,
-		"jodo.host":                    cfg.Jodo.Host,
-		"jodo.ssh_user":                cfg.Jodo.SSHUser,
-		"jodo.port":                    fmt.Sprintf("%d", cfg.Jodo.Port),
-		"jodo.app_port":                fmt.Sprintf("%d", cfg.Jodo.AppPort),
-		"jodo.brain_path":              cfg.Jodo.BrainPath,
-		"jodo.health_endpoint":         cfg.Jodo.HealthEndpoint,
-		"routing.strategy":             cfg.Routing.Strategy,
-	}
-
-	for k, v := range settings {
-		if v != "" && v != "0" {
-			if err := s.SetConfig(k, v); err != nil {
-				return fmt.Errorf("import config %s: %w", k, err)
-			}
-		}
-	}
-
-	// Intent preferences as JSON
-	if len(cfg.Routing.IntentPreferences) > 0 {
-		ipJSON, _ := json.Marshal(cfg.Routing.IntentPreferences)
-		s.SetConfig("routing.intent_preferences", string(ipJSON))
-	}
-
-	// Providers
-	for name, pc := range cfg.Providers {
-		if err := s.SaveProvider(name, true, pc.APIKey, pc.BaseURL, pc.MonthlyBudget, pc.EmergencyReserve); err != nil {
-			return fmt.Errorf("import provider %s: %w", name, err)
-		}
-		for mk, mc := range pc.Models {
-			modelName := mc.Model
-			if modelName == "" {
-				modelName = mk
-			}
-			if err := s.SaveModel(name, mk, modelName, mc.InputCostPer1MTokens, mc.OutputCostPer1MTokens, mc.Capabilities, mc.Quality); err != nil {
-				return fmt.Errorf("import model %s/%s: %w", name, mk, err)
-			}
-		}
-	}
-
-	// Import SSH key from file if it exists
-	if cfg.Jodo.SSHKeyPath != "" {
-		// We try, but don't fail migration if SSH key can't be read
-		// (it may not be accessible from the new setup)
-		log.Printf("[config] note: SSH key at %s not imported (will need to be regenerated in UI)", cfg.Jodo.SSHKeyPath)
-	}
-
-	return nil
-}
-
-// ImportGenesis imports a YAML-loaded Genesis into the database.
-func (s *DBStore) ImportGenesis(g *Genesis) error {
-	return s.SaveGenesis(g)
 }
 
 // --- provider listing for API ---

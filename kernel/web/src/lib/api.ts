@@ -151,10 +151,10 @@ export const api = {
     })
   },
 
-  setupDiscoverModels(provider: string, baseUrl?: string) {
+  setupDiscoverModels(provider: string, baseUrl?: string, apiKey?: string) {
     return request<{ models: unknown[]; error?: string }>('/api/setup/discover', {
       method: 'POST',
-      body: JSON.stringify({ provider, base_url: baseUrl }),
+      body: JSON.stringify({ provider, base_url: baseUrl, api_key: apiKey }),
     })
   },
 

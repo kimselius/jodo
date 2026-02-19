@@ -14,7 +14,7 @@ interface EnabledModel {
 }
 
 interface DiscoveredModel {
-  // Common
+  // Common (returned by all providers)
   model_key?: string
   model_name?: string
   input_cost_per_1m?: number
@@ -22,6 +22,7 @@ interface DiscoveredModel {
   capabilities?: string[]
   quality?: number
   description?: string
+  tier?: string
   recommended?: boolean | {
     model_key: string
     model_name: string
@@ -44,9 +45,11 @@ const props = withDefaults(defineProps<{
   enabledModels: EnabledModel[]
   setupMode?: boolean
   baseUrl?: string
+  apiKey?: string
 }>(), {
   setupMode: false,
   baseUrl: '',
+  apiKey: '',
 })
 
 const emit = defineEmits<{
@@ -60,14 +63,50 @@ const discoveryError = ref('')
 const hasDiscovered = ref(false)
 
 const isOllama = computed(() => props.providerName === 'ollama')
-const buttonLabel = computed(() => isOllama.value ? 'Discover Models' : 'Show Available Models')
+const buttonLabel = computed(() => isOllama.value ? 'Discover Models' : 'Discover Models')
+
+// Group discovered models by tier
+const tierOrder = ['flagship', 'reasoning', 'mid', 'budget', 'embed']
+const tierLabels: Record<string, string> = {
+  flagship: 'Flagship',
+  reasoning: 'Reasoning',
+  mid: 'Standard',
+  budget: 'Budget',
+  embed: 'Embedding',
+}
+
+const groupedModels = computed(() => {
+  if (discovered.value.length === 0) return []
+
+  // For Ollama, don't tier — just return flat list sorted by quality
+  if (isOllama.value) {
+    return [{ tier: '', label: '', models: [...discovered.value] }]
+  }
+
+  // Group by tier
+  const groups: Record<string, DiscoveredModel[]> = {}
+  for (const m of discovered.value) {
+    const tier = m.tier || 'mid'
+    if (!groups[tier]) groups[tier] = []
+    groups[tier].push(m)
+  }
+
+  // Return in tier order, skip empty groups
+  return tierOrder
+    .filter(t => groups[t]?.length)
+    .map(t => ({
+      tier: t,
+      label: tierLabels[t] || t,
+      models: groups[t].sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0)),
+    }))
+})
 
 async function discover() {
   discovering.value = true
   discoveryError.value = ''
   try {
     const res = props.setupMode
-      ? await api.setupDiscoverModels(props.providerName, props.baseUrl || undefined)
+      ? await api.setupDiscoverModels(props.providerName, props.baseUrl || undefined, props.apiKey || undefined)
       : await api.discoverModels(props.providerName)
     discovered.value = res.models as DiscoveredModel[]
     if (res.error) discoveryError.value = res.error
@@ -111,7 +150,6 @@ function toggle(model: DiscoveredModel) {
   if (isEnabled(model)) {
     emit('disable', key)
   } else {
-    // Build model data from discovered info
     const rec = typeof model.recommended === 'object' ? model.recommended : null
     const enabledModel: EnabledModel = {
       model_key: key,
@@ -130,6 +168,22 @@ function formatSize(bytes: number): string {
   if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB'
   return bytes + ' B'
 }
+
+function formatCost(input: number, output: number): string {
+  if (input === 0 && output === 0) return 'Free'
+  return `$${input}/$${output} /1M`
+}
+
+function tierBadgeVariant(tier: string): string {
+  switch (tier) {
+    case 'flagship': return 'default'
+    case 'reasoning': return 'accent'
+    case 'mid': return 'secondary'
+    case 'budget': return 'success'
+    case 'embed': return 'warning'
+    default: return 'secondary'
+  }
+}
 </script>
 
 <template>
@@ -144,44 +198,66 @@ function formatSize(bytes: number): string {
         {{ discovering ? 'Discovering...' : buttonLabel }}
       </Button>
       <span v-if="discoveryError" class="text-xs text-destructive">{{ discoveryError }}</span>
+      <span v-if="hasDiscovered && discovered.length > 0" class="text-xs text-muted-foreground">
+        {{ discovered.length }} models found
+      </span>
     </div>
 
     <div v-if="hasDiscovered && discovered.length === 0 && !discoveryError" class="text-xs text-muted-foreground">
       No models found.
     </div>
 
-    <div v-if="discovered.length > 0" class="space-y-1.5">
-      <div
-        v-for="model in discovered"
-        :key="getModelKey(model)"
-        class="flex items-center gap-3 bg-muted rounded-md px-3 py-2 cursor-pointer hover:bg-muted/80 transition-colors"
-        @click="toggle(model)"
-      >
-        <input
-          type="checkbox"
-          :checked="isEnabled(model)"
-          class="rounded border-input flex-shrink-0"
-          @click.stop
-          @change="toggle(model)"
-        />
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-mono truncate">{{ getModelKey(model) }}</span>
-            <Badge v-if="isRecommended(model)" variant="success">recommended</Badge>
-            <span v-if="model.parameter_size" class="text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded">
-              {{ model.parameter_size }}
-            </span>
-          </div>
-          <p v-if="getDescription(model)" class="text-xs text-muted-foreground mt-0.5 truncate">
-            {{ getDescription(model) }}
-          </p>
+    <!-- Tiered model list -->
+    <div v-if="groupedModels.length > 0" class="space-y-4">
+      <div v-for="group in groupedModels" :key="group.tier">
+        <!-- Tier header (skip for Ollama flat list) -->
+        <div v-if="group.label" class="flex items-center gap-2 mb-1.5">
+          <Badge :variant="tierBadgeVariant(group.tier) as any">{{ group.label }}</Badge>
+          <div class="flex-1 border-t border-border" />
         </div>
-        <div class="flex-shrink-0 text-right">
-          <div v-if="model.size_bytes" class="text-[10px] text-muted-foreground">
-            {{ formatSize(model.size_bytes) }}
-          </div>
-          <div v-if="(model.input_cost_per_1m ?? 0) > 0" class="text-[10px] text-muted-foreground">
-            ${{ model.input_cost_per_1m }}/${{ model.output_cost_per_1m }} /1M
+
+        <div class="space-y-1">
+          <div
+            v-for="model in group.models"
+            :key="getModelKey(model)"
+            class="flex items-center gap-3 bg-muted rounded-md px-3 py-2 cursor-pointer hover:bg-muted/80 transition-colors"
+            @click="toggle(model)"
+          >
+            <input
+              type="checkbox"
+              :checked="isEnabled(model)"
+              class="rounded border-input flex-shrink-0"
+              @click.stop
+              @change="toggle(model)"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-mono truncate">{{ getModelKey(model) }}</span>
+                <Badge v-if="isRecommended(model)" variant="success">recommended</Badge>
+                <span v-if="model.parameter_size" class="text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded">
+                  {{ model.parameter_size }}
+                </span>
+              </div>
+              <div class="flex items-center gap-3 mt-0.5">
+                <p v-if="getDescription(model)" class="text-xs text-muted-foreground truncate">
+                  {{ getDescription(model) }}
+                </p>
+                <span v-if="model.capabilities?.length" class="text-[10px] text-muted-foreground flex-shrink-0">
+                  {{ model.capabilities.join(', ') }}
+                </span>
+              </div>
+            </div>
+            <div class="flex-shrink-0 text-right">
+              <div v-if="model.quality" class="text-[10px] text-muted-foreground">
+                q{{ model.quality }}
+              </div>
+              <div v-if="model.size_bytes" class="text-[10px] text-muted-foreground">
+                {{ formatSize(model.size_bytes) }}
+              </div>
+              <div class="text-[10px] text-muted-foreground">
+                {{ formatCost(model.input_cost_per_1m ?? 0, model.output_cost_per_1m ?? 0) }}
+              </div>
+            </div>
           </div>
         </div>
       </div>

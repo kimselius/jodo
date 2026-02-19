@@ -70,11 +70,6 @@ func main() {
 	// 6. Check setup status
 	setupComplete := configStore.IsSetupComplete()
 
-	if !setupComplete {
-		// Try auto-migration from YAML
-		setupComplete = autoMigrateYAML(configStore, database)
-	}
-
 	// 7. Create server — either in setup mode or fully operational
 	if setupComplete {
 		log.Println("[boot] setup complete — starting in operational mode")
@@ -400,47 +395,6 @@ func writeSSHKeyToTemp(store *config.DBStore) (string, error) {
 	tmpFile.Close()
 	os.Chmod(tmpFile.Name(), 0600)
 	return tmpFile.Name(), nil
-}
-
-// autoMigrateYAML tries to import existing YAML config into the database.
-func autoMigrateYAML(store *config.DBStore, database *sql.DB) bool {
-	configPath := envOr("KERNEL_CONFIG", "/app/configs/config.yaml")
-	genesisPath := envOr("KERNEL_GENESIS", "/app/configs/genesis.yaml")
-
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		log.Printf("[boot] no valid YAML config at %s: %v", configPath, err)
-		return false
-	}
-
-	genesis, err := config.LoadGenesis(genesisPath)
-	if err != nil {
-		log.Printf("[boot] no valid genesis at %s: %v", genesisPath, err)
-		return false
-	}
-
-	// Only auto-migrate if YAML has meaningful provider config
-	if len(cfg.Providers) == 0 {
-		log.Println("[boot] YAML config has no providers — skipping auto-migration")
-		return false
-	}
-
-	log.Println("[boot] auto-migrating YAML config to database...")
-	if err := store.ImportConfig(cfg); err != nil {
-		log.Printf("[boot] auto-migration failed: %v", err)
-		return false
-	}
-	if err := store.ImportGenesis(genesis); err != nil {
-		log.Printf("[boot] genesis migration failed: %v", err)
-		return false
-	}
-	if err := store.SetConfig("setup_complete", "true"); err != nil {
-		log.Printf("[boot] failed to mark setup complete: %v", err)
-		return false
-	}
-
-	log.Println("[boot] YAML config migrated to database successfully")
-	return true
 }
 
 func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, growthLog *growth.Logger) {

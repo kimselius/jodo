@@ -3,10 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -100,87 +97,6 @@ func ParseModelRef(ref string) (modelKey, providerName string, ok bool) {
 	}
 	// Backward compatible: treat as provider name
 	return "", ref, false
-}
-
-var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
-
-// expandEnvVars replaces ${VAR_NAME} with environment variable values.
-func expandEnvVars(s string) string {
-	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
-		varName := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
-		if val, ok := os.LookupEnv(varName); ok {
-			return val
-		}
-		return match
-	})
-}
-
-// LoadConfig reads config.yaml and expands environment variables.
-func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-
-	expanded := expandEnvVars(string(data))
-
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("validate config: %w", err)
-	}
-
-	return &cfg, nil
-}
-
-// LoadGenesis reads genesis.yaml.
-func LoadGenesis(path string) (*Genesis, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read genesis: %w", err)
-	}
-
-	var g Genesis
-	if err := yaml.Unmarshal(data, &g); err != nil {
-		return nil, fmt.Errorf("parse genesis: %w", err)
-	}
-
-	if g.Identity.Name == "" {
-		return nil, fmt.Errorf("genesis: identity.name is required")
-	}
-
-	return &g, nil
-}
-
-func (c *Config) validate() error {
-	if c.Kernel.Port == 0 {
-		c.Kernel.Port = 8080
-	}
-	if c.Kernel.HealthCheckInterval == 0 {
-		c.Kernel.HealthCheckInterval = 10
-	}
-	if c.Kernel.MaxRestartAttempts == 0 {
-		c.Kernel.MaxRestartAttempts = 3
-	}
-	if c.Jodo.Port == 0 {
-		c.Jodo.Port = 9001
-	}
-	if c.Jodo.AppPort == 0 {
-		c.Jodo.AppPort = 9000
-	}
-	if c.Jodo.BrainPath == "" {
-		c.Jodo.BrainPath = "/opt/jodo/brain"
-	}
-	if c.Jodo.HealthEndpoint == "" {
-		c.Jodo.HealthEndpoint = "/health"
-	}
-	if c.Database.Port == 0 {
-		c.Database.Port = 5432
-	}
-	return nil
 }
 
 // LoadDatabaseConfig loads only the database configuration from environment variables.

@@ -128,6 +128,7 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
           :enabled-models="provider.models"
           :setup-mode="true"
           :base-url="provider.base_url"
+          :api-key="provider.api_key"
           @enable="(model) => handleModelEnable(provider, model)"
           @disable="(key) => handleModelDisable(provider, key)"
         />

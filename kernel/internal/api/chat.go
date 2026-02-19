@@ -112,35 +112,46 @@ func (s *Server) handleChatPost(c *gin.Context) {
 // handleChatGet retrieves messages.
 // GET /api/chat?last=10&source=human&since_id=42&unread=true
 func (s *Server) handleChatGet(c *gin.Context) {
-	query := `SELECT id, source, message, galla, read_at, created_at FROM chat_messages WHERE 1=1`
+	var conditions []string
 	args := []interface{}{}
 	argIdx := 1
 
 	if source := c.Query("source"); source != "" {
-		query += ` AND source = $` + strconv.Itoa(argIdx)
+		conditions = append(conditions, fmt.Sprintf("source = $%d", argIdx))
 		args = append(args, source)
 		argIdx++
 	}
 
 	if sinceID := c.Query("since_id"); sinceID != "" {
-		query += ` AND id > $` + strconv.Itoa(argIdx)
+		conditions = append(conditions, fmt.Sprintf("id > $%d", argIdx))
 		args = append(args, sinceID)
 		argIdx++
 	}
 
 	if c.Query("unread") == "true" {
-		query += ` AND read_at IS NULL`
+		conditions = append(conditions, "read_at IS NULL")
 	}
 
-	query += ` ORDER BY id ASC`
-
-	if last := c.Query("last"); last != "" {
-		n, err := strconv.Atoi(last)
-		if err == nil && n > 0 {
-			// Wrap in subquery to get last N in chronological order
-			query = `SELECT * FROM (` + query + ` ) sub ORDER BY id DESC LIMIT ` + strconv.Itoa(n)
-			query = `SELECT * FROM (` + query + `) sub2 ORDER BY id ASC`
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + conditions[0]
+		for _, cond := range conditions[1:] {
+			where += " AND " + cond
 		}
+	}
+
+	var limit string
+	if last := c.Query("last"); last != "" {
+		if n, err := strconv.Atoi(last); err == nil && n > 0 {
+			limit = fmt.Sprintf(" LIMIT $%d", argIdx)
+			args = append(args, n)
+		}
+	}
+
+	query := `SELECT id, source, message, galla, read_at, created_at FROM chat_messages` + where + ` ORDER BY id DESC` + limit
+	if limit != "" {
+		// Wrap to return rows in chronological order
+		query = `SELECT * FROM (` + query + `) sub ORDER BY id ASC`
 	}
 
 	rows, err := s.DB.Query(query, args...)

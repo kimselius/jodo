@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -270,9 +274,19 @@ func (s *Server) handleSettingsProviderDiscover(c *gin.Context) {
 	case "ollama":
 		s.discoverOllamaModels(c)
 	case "claude":
-		c.JSON(http.StatusOK, gin.H{"models": knownClaudeModels()})
+		apiKey, err := s.ConfigStore.GetProviderAPIKey("claude")
+		if err != nil || apiKey == "" {
+			c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "No API key configured for Claude"})
+			return
+		}
+		discoverClaudeModels(c, apiKey)
 	case "openai":
-		c.JSON(http.StatusOK, gin.H{"models": knownOpenAIModels()})
+		apiKey, err := s.ConfigStore.GetProviderAPIKey("openai")
+		if err != nil || apiKey == "" {
+			c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "No API key configured for OpenAI"})
+			return
+		}
+		discoverOpenAIModels(c, apiKey)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown provider"})
 	}
@@ -416,87 +430,379 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- Known Model Catalogs ---
+// --- Model Discovery ---
 
 type knownModel struct {
-	ModelKey       string   `json:"model_key"`
-	ModelName      string   `json:"model_name"`
-	InputCostPer1M float64  `json:"input_cost_per_1m"`
-	OutputCostPer1M float64 `json:"output_cost_per_1m"`
-	Capabilities   []string `json:"capabilities"`
-	Quality        int      `json:"quality"`
-	Description    string   `json:"description"`
-	Recommended    bool     `json:"recommended"`
+	ModelKey        string   `json:"model_key"`
+	ModelName       string   `json:"model_name"`
+	InputCostPer1M  float64  `json:"input_cost_per_1m"`
+	OutputCostPer1M float64  `json:"output_cost_per_1m"`
+	Capabilities    []string `json:"capabilities"`
+	Quality         int      `json:"quality"`
+	Description     string   `json:"description"`
+	Recommended     bool     `json:"recommended"`
+	Tier            string   `json:"tier"` // "flagship", "mid", "budget", "embed", "reasoning"
 }
 
-func knownClaudeModels() []knownModel {
-	return []knownModel{
-		{
-			ModelKey: "claude-sonnet-4-20250514", ModelName: "claude-sonnet-4-20250514",
-			InputCostPer1M: 3.0, OutputCostPer1M: 15.0,
-			Capabilities: []string{"chat", "code", "repair", "tools", "quick"},
-			Quality: 90, Description: "Best balance of speed, cost, and intelligence", Recommended: true,
-		},
-		{
-			ModelKey: "claude-opus-4-20250514", ModelName: "claude-opus-4-20250514",
-			InputCostPer1M: 15.0, OutputCostPer1M: 75.0,
-			Capabilities: []string{"chat", "code", "repair", "tools"},
-			Quality: 100, Description: "Most capable, highest cost",
-		},
-		{
-			ModelKey: "claude-haiku-3-5", ModelName: "claude-3-5-haiku-20241022",
-			InputCostPer1M: 0.80, OutputCostPer1M: 4.0,
-			Capabilities: []string{"chat", "code", "tools", "quick"},
-			Quality: 70, Description: "Fast and affordable for routine tasks", Recommended: true,
-		},
+// --- Pricing cache (fetched from litellm community pricing DB) ---
+
+const pricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+const pricingTTL = 24 * time.Hour
+
+type pricingEntry struct {
+	InputCostPerToken  float64 `json:"input_cost_per_token"`
+	OutputCostPerToken float64 `json:"output_cost_per_token"`
+	Mode               string  `json:"mode"`
+	SupportsFunctions  bool    `json:"supports_function_calling"`
+	SupportsVision     bool    `json:"supports_vision"`
+	SupportsReasoning  bool    `json:"supports_reasoning"`
+	MaxInputTokens     int     `json:"max_input_tokens"`
+	MaxOutputTokens    int     `json:"max_output_tokens"`
+}
+
+var pricingDB = &modelPricingDB{}
+
+type modelPricingDB struct {
+	mu        sync.RWMutex
+	entries   map[string]pricingEntry
+	fetchedAt time.Time
+}
+
+// lookup tries exact match, then provider-prefixed matches.
+func (db *modelPricingDB) lookup(modelID string) (pricingEntry, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.entries == nil {
+		return pricingEntry{}, false
+	}
+	// Exact match
+	if e, ok := db.entries[modelID]; ok {
+		return e, true
+	}
+	// Try common prefixes (litellm sometimes uses provider/model format)
+	for _, prefix := range []string{"anthropic/", "openai/", "azure/"} {
+		if e, ok := db.entries[prefix+modelID]; ok {
+			return e, true
+		}
+	}
+	return pricingEntry{}, false
+}
+
+// refresh fetches pricing data if cache is stale. Non-blocking if fresh.
+func (db *modelPricingDB) refresh() {
+	db.mu.RLock()
+	fresh := db.entries != nil && time.Since(db.fetchedAt) < pricingTTL
+	db.mu.RUnlock()
+	if fresh {
+		return
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Get(pricingURL)
+	if err != nil {
+		log.Printf("[settings] failed to fetch pricing DB: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		log.Printf("[settings] pricing DB returned %d", resp.StatusCode)
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		log.Printf("[settings] failed to parse pricing DB: %v", err)
+		return
+	}
+
+	entries := make(map[string]pricingEntry, len(raw))
+	for k, v := range raw {
+		if k == "sample_spec" {
+			continue
+		}
+		var e pricingEntry
+		json.Unmarshal(v, &e) // ignore individual parse errors
+		entries[k] = e
+	}
+
+	db.mu.Lock()
+	db.entries = entries
+	db.fetchedAt = time.Now()
+	db.mu.Unlock()
+	log.Printf("[settings] pricing DB refreshed: %d models", len(entries))
+}
+
+// --- Claude discovery ---
+
+func discoverClaudeModels(c *gin.Context, apiKey string) {
+	pricingDB.refresh()
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, _ := http.NewRequest("GET", "https://api.anthropic.com/v1/models?limit=100", nil)
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": fmt.Sprintf("Cannot reach Anthropic API: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": fmt.Sprintf("Anthropic API returned %d: %s", resp.StatusCode, string(body))})
+		return
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var apiResp struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			Type        string `json:"type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "Failed to parse Anthropic response"})
+		return
+	}
+
+	models := make([]knownModel, 0, len(apiResp.Data))
+	for _, m := range apiResp.Data {
+		if m.Type != "" && m.Type != "model" {
+			continue
+		}
+		km := enrichModel(m.ID, m.DisplayName, "claude")
+		models = append(models, km)
+	}
+
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].Quality > models[j].Quality
+	})
+	c.JSON(http.StatusOK, gin.H{"models": models})
+}
+
+// --- OpenAI discovery ---
+
+func discoverOpenAIModels(c *gin.Context, apiKey string) {
+	pricingDB.refresh()
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, _ := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": fmt.Sprintf("Cannot reach OpenAI API: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": fmt.Sprintf("OpenAI API returned %d: %s", resp.StatusCode, string(body))})
+		return
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var apiResp struct {
+		Data []struct {
+			ID      string `json:"id"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "Failed to parse OpenAI response"})
+		return
+	}
+
+	// Filter to relevant model families
+	relevantPrefixes := []string{
+		"gpt-4", "gpt-3.5", "gpt-5",
+		"o1", "o3", "o4",
+		"text-embedding", "chatgpt-4o",
+	}
+
+	models := make([]knownModel, 0)
+	for _, m := range apiResp.Data {
+		relevant := false
+		for _, prefix := range relevantPrefixes {
+			if strings.HasPrefix(m.ID, prefix) {
+				relevant = true
+				break
+			}
+		}
+		if !relevant {
+			continue
+		}
+		// Skip non-text variants
+		if strings.Contains(m.ID, "-audio") || strings.Contains(m.ID, "-realtime") ||
+			strings.Contains(m.ID, "-search") || strings.Contains(m.ID, "-instruct") ||
+			strings.Contains(m.ID, "-transcribe") || strings.Contains(m.ID, "-tts") {
+			continue
+		}
+		km := enrichModel(m.ID, "", "openai")
+		models = append(models, km)
+	}
+
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].Quality > models[j].Quality
+	})
+	c.JSON(http.StatusOK, gin.H{"models": models})
+}
+
+// --- Shared enrichment ---
+
+// enrichModel enriches a model ID with pricing from litellm + tier/quality from family inference.
+func enrichModel(id, displayName, provider string) knownModel {
+	km := knownModel{
+		ModelKey:  id,
+		ModelName: id,
+	}
+	if displayName != "" {
+		km.Description = displayName
+	}
+
+	// 1. Try to get pricing + capabilities from litellm pricing DB
+	if pe, ok := pricingDB.lookup(id); ok {
+		km.InputCostPer1M = pe.InputCostPerToken * 1_000_000
+		km.OutputCostPer1M = pe.OutputCostPerToken * 1_000_000
+
+		// Derive capabilities from litellm fields
+		caps := []string{}
+		if pe.Mode == "chat" {
+			caps = append(caps, "chat")
+		}
+		if pe.Mode == "embedding" {
+			caps = append(caps, "embed")
+		}
+		if pe.SupportsFunctions {
+			caps = append(caps, "tools")
+		}
+		if pe.SupportsReasoning {
+			caps = append(caps, "reasoning")
+		}
+		if len(caps) > 0 {
+			km.Capabilities = caps
+		}
+	}
+
+	// 2. Infer tier, quality, and recommended from model family (stable across versions)
+	inferTierAndQuality(&km, id, provider)
+
+	// 3. Add "code" capability for known coding-capable families
+	if km.Tier != "embed" && !containsStr(km.Capabilities, "code") {
+		if km.Quality >= 70 {
+			km.Capabilities = append(km.Capabilities, "code")
+		}
+	}
+
+	// 4. Fill in defaults if pricing DB didn't have this model
+	if len(km.Capabilities) == 0 {
+		km.Capabilities = []string{"chat", "tools"}
+	}
+	if km.Tier == "" {
+		km.Tier = "mid"
+	}
+	if km.Quality == 0 {
+		km.Quality = 70
+	}
+	if km.Description == "" {
+		km.Description = strings.Title(provider) + " model"
+	}
+
+	return km
+}
+
+// inferTierAndQuality assigns tier, quality, recommended, and optionally description
+// based on the model family prefix. This is the only part that uses pattern matching;
+// pricing comes from litellm.
+func inferTierAndQuality(km *knownModel, id, provider string) {
+	type tierInfo struct {
+		tier        string
+		quality     int
+		recommended bool
+		desc        string
+	}
+
+	// Ordered from most specific to least specific
+	var patterns []struct {
+		prefix string
+		info   tierInfo
+	}
+
+	if provider == "claude" {
+		patterns = []struct {
+			prefix string
+			info   tierInfo
+		}{
+			{"claude-opus-4", tierInfo{"flagship", 100, false, "Most capable Claude model"}},
+			{"claude-sonnet-4", tierInfo{"mid", 90, true, "Best balance of speed, cost, and intelligence"}},
+			{"claude-haiku-4", tierInfo{"budget", 75, true, "Fast and affordable"}},
+			{"claude-3-5-sonnet", tierInfo{"mid", 85, false, "Claude 3.5 Sonnet"}},
+			{"claude-3-5-haiku", tierInfo{"budget", 70, true, "Fast and affordable"}},
+			{"claude-3-opus", tierInfo{"flagship", 95, false, "Claude 3 Opus"}},
+			{"claude-3-sonnet", tierInfo{"mid", 80, false, "Claude 3 Sonnet"}},
+			{"claude-3-haiku", tierInfo{"budget", 65, false, "Claude 3 Haiku"}},
+		}
+	} else {
+		patterns = []struct {
+			prefix string
+			info   tierInfo
+		}{
+			// GPT-5 family
+			{"gpt-5.1", tierInfo{"flagship", 98, false, "GPT-5.1"}},
+			{"gpt-5", tierInfo{"flagship", 96, false, "GPT-5"}},
+			// Reasoning
+			{"o4-mini", tierInfo{"reasoning", 92, true, "Fast reasoning model"}},
+			{"o3-pro", tierInfo{"flagship", 100, false, "Most capable reasoning model"}},
+			{"o3-mini", tierInfo{"reasoning", 88, false, "Efficient reasoning model"}},
+			{"o3", tierInfo{"flagship", 98, false, "Advanced reasoning model"}},
+			{"o1-pro", tierInfo{"flagship", 96, false, "Deep reasoning model"}},
+			{"o1-mini", tierInfo{"reasoning", 82, false, "Small reasoning model"}},
+			{"o1", tierInfo{"reasoning", 90, false, "Reasoning model"}},
+			// GPT-4.1 family
+			{"gpt-4.1-nano", tierInfo{"budget", 55, false, "Ultra-cheap for simple tasks"}},
+			{"gpt-4.1-mini", tierInfo{"budget", 75, false, "Affordable GPT-4.1"}},
+			{"gpt-4.1", tierInfo{"mid", 88, true, "Strong coding model"}},
+			// GPT-4o family
+			{"gpt-4o-mini", tierInfo{"budget", 70, true, "Fast and cheap"}},
+			{"gpt-4o", tierInfo{"mid", 85, true, "GPT-4o"}},
+			// GPT-3.5
+			{"gpt-3.5-turbo", tierInfo{"budget", 50, false, "Legacy GPT-3.5"}},
+			// Embeddings
+			{"text-embedding-3-large", tierInfo{"embed", 80, false, "Higher quality embeddings"}},
+			{"text-embedding-3-small", tierInfo{"embed", 60, true, "Efficient embedding model"}},
+			{"text-embedding-ada", tierInfo{"embed", 40, false, "Legacy embedding model"}},
+		}
+	}
+
+	for _, p := range patterns {
+		if strings.HasPrefix(id, p.prefix) {
+			km.Tier = p.info.tier
+			km.Quality = p.info.quality
+			km.Recommended = p.info.recommended
+			if km.Description == "" || km.Description == id {
+				km.Description = p.info.desc
+			}
+			return
+		}
 	}
 }
 
-func knownOpenAIModels() []knownModel {
-	return []knownModel{
-		{
-			ModelKey: "gpt-4o", ModelName: "gpt-4o",
-			InputCostPer1M: 2.50, OutputCostPer1M: 10.0,
-			Capabilities: []string{"chat", "code", "repair", "tools"},
-			Quality: 85, Description: "Flagship GPT-4o model", Recommended: true,
-		},
-		{
-			ModelKey: "gpt-4o-mini", ModelName: "gpt-4o-mini",
-			InputCostPer1M: 0.15, OutputCostPer1M: 0.60,
-			Capabilities: []string{"chat", "code", "tools", "quick"},
-			Quality: 70, Description: "Fast and cheap for simple tasks", Recommended: true,
-		},
-		{
-			ModelKey: "gpt-4.1", ModelName: "gpt-4.1",
-			InputCostPer1M: 2.0, OutputCostPer1M: 8.0,
-			Capabilities: []string{"chat", "code", "repair", "tools"},
-			Quality: 88, Description: "Latest GPT-4.1 with strong coding",
-		},
-		{
-			ModelKey: "gpt-4.1-mini", ModelName: "gpt-4.1-mini",
-			InputCostPer1M: 0.40, OutputCostPer1M: 1.60,
-			Capabilities: []string{"chat", "code", "tools", "quick"},
-			Quality: 75, Description: "Affordable GPT-4.1 variant",
-		},
-		{
-			ModelKey: "gpt-4.1-nano", ModelName: "gpt-4.1-nano",
-			InputCostPer1M: 0.10, OutputCostPer1M: 0.40,
-			Capabilities: []string{"chat", "quick"},
-			Quality: 55, Description: "Ultra-cheap for simple tasks",
-		},
-		{
-			ModelKey: "text-embedding-3-small", ModelName: "text-embedding-3-small",
-			InputCostPer1M: 0.02, OutputCostPer1M: 0,
-			Capabilities: []string{"embed"},
-			Quality: 60, Description: "Efficient embedding model",
-		},
-		{
-			ModelKey: "text-embedding-3-large", ModelName: "text-embedding-3-large",
-			InputCostPer1M: 0.13, OutputCostPer1M: 0,
-			Capabilities: []string{"embed"},
-			Quality: 80, Description: "Higher quality embeddings",
-		},
+func containsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
 	}
+	return false
 }
 
 // matchOllamaModel returns recommended defaults for a discovered Ollama model

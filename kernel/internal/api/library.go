@@ -2,8 +2,10 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,17 +36,17 @@ type LibraryComment struct {
 // handleLibraryList returns all library items with their comments.
 // GET /api/library?status=new
 func (s *Server) handleLibraryList(c *gin.Context) {
-	query := `SELECT id, title, content, status, priority, created_at, updated_at FROM library_items WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
+	where := ""
 
 	if status := c.Query("status"); status != "" {
-		query += ` AND status = $` + strconv.Itoa(argIdx)
+		where = fmt.Sprintf(" WHERE status = $%d", argIdx)
 		args = append(args, status)
 		argIdx++
 	}
 
-	query += ` ORDER BY priority DESC, created_at DESC`
+	query := `SELECT id, title, content, status, priority, created_at, updated_at FROM library_items` + where + ` ORDER BY priority DESC, created_at DESC`
 
 	rows, err := s.DB.Query(query, args...)
 	if err != nil {
@@ -201,23 +203,23 @@ func (s *Server) handleLibraryUpdate(c *gin.Context) {
 	argIdx := 1
 
 	if req.Title != nil {
-		setClauses = append(setClauses, "title = $"+strconv.Itoa(argIdx))
+		setClauses = append(setClauses, fmt.Sprintf("title = $%d", argIdx))
 		args = append(args, *req.Title)
 		argIdx++
 	}
 	if req.Content != nil {
-		setClauses = append(setClauses, "content = $"+strconv.Itoa(argIdx))
+		setClauses = append(setClauses, fmt.Sprintf("content = $%d", argIdx))
 		args = append(args, *req.Content)
 		argIdx++
 	}
 	if req.Priority != nil {
-		setClauses = append(setClauses, "priority = $"+strconv.Itoa(argIdx))
+		setClauses = append(setClauses, fmt.Sprintf("priority = $%d", argIdx))
 		args = append(args, *req.Priority)
 		argIdx++
 	}
 
 	args = append(args, id)
-	query := "UPDATE library_items SET " + joinStrings(setClauses, ", ") + " WHERE id = $" + strconv.Itoa(argIdx)
+	query := fmt.Sprintf("UPDATE library_items SET %s WHERE id = $%d", strings.Join(setClauses, ", "), argIdx)
 
 	result, err := s.DB.Exec(query, args...)
 	if err != nil {
@@ -363,14 +365,3 @@ func (s *Server) handleLibraryCommentPost(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "comment": comment})
 }
 
-// joinStrings joins a slice of strings with a separator.
-func joinStrings(parts []string, sep string) string {
-	result := ""
-	for i, p := range parts {
-		if i > 0 {
-			result += sep
-		}
-		result += p
-	}
-	return result
-}

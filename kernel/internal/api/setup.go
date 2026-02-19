@@ -440,6 +440,7 @@ func (s *Server) handleSetupDiscover(c *gin.Context) {
 	var req struct {
 		Provider string `json:"provider"`
 		BaseURL  string `json:"base_url"`
+		APIKey   string `json:"api_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Provider == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "provider is required"})
@@ -448,16 +449,23 @@ func (s *Server) handleSetupDiscover(c *gin.Context) {
 
 	switch req.Provider {
 	case "ollama":
-		// During setup, use the provided base_url since it's not in the DB yet
 		baseURL := req.BaseURL
 		if baseURL == "" {
 			baseURL = "http://host.docker.internal:11434"
 		}
 		s.discoverOllamaModelsWithURL(c, baseURL)
 	case "claude":
-		c.JSON(http.StatusOK, gin.H{"models": knownClaudeModels()})
+		if req.APIKey == "" {
+			c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "Enter an API key first, then discover models"})
+			return
+		}
+		discoverClaudeModels(c, req.APIKey)
 	case "openai":
-		c.JSON(http.StatusOK, gin.H{"models": knownOpenAIModels()})
+		if req.APIKey == "" {
+			c.JSON(http.StatusOK, gin.H{"models": []interface{}{}, "error": "Enter an API key first, then discover models"})
+			return
+		}
+		discoverOpenAIModels(c, req.APIKey)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown provider"})
 	}
