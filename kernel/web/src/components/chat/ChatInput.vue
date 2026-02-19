@@ -6,11 +6,13 @@ const props = defineProps<{ sending: boolean }>()
 const emit = defineEmits<{ send: [text: string] }>()
 
 const text = ref('')
+const textarea = ref<HTMLTextAreaElement>()
 
 function handleSend() {
   if (!text.value.trim() || props.sending) return
   emit('send', text.value)
   text.value = ''
+  textarea.value?.focus()
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -25,6 +27,7 @@ function handleKeydown(e: KeyboardEvent) {
   <div class="border-t border-border bg-card px-4 py-3">
     <div class="flex items-end gap-2">
       <textarea
+        ref="textarea"
         v-model="text"
         @keydown="handleKeydown"
         placeholder="Message Jodo..."
