@@ -25,6 +25,7 @@ type Server struct {
 	Growth   *growth.Logger
 	Audit    *audit.Logger
 	DB       *sql.DB
+	ChatHub  *ChatHub
 }
 
 // SetupRouter creates and configures the Gin router with all API routes.
@@ -61,6 +62,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.POST("/log", s.handleLog)
 		api.POST("/chat", s.handleChatPost)
 		api.GET("/chat", s.handleChatGet)
+		api.GET("/chat/stream", s.handleChatStream)
 	}
 
 	// Dashboard is mounted externally in main.go

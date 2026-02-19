@@ -89,6 +89,8 @@ func main() {
 	growthLogger := growth.NewLogger(database)
 
 	// 4. Set up API server
+	chatHub := api.NewChatHub()
+
 	server := &api.Server{
 		Config:   cfg,
 		Genesis:  genesis,
@@ -100,6 +102,7 @@ func main() {
 		Growth:   growthLogger,
 		Audit:    proxy.Audit,
 		DB:       database,
+		ChatHub:  chatHub,
 	}
 
 	router := server.SetupRouter()

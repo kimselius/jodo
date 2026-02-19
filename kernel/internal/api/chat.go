@@ -2,8 +2,12 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +19,45 @@ type ChatMessage struct {
 	Message   string    `json:"message"`
 	Galla     *int      `json:"galla,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// ChatHub manages SSE subscribers for real-time chat updates.
+type ChatHub struct {
+	mu      sync.RWMutex
+	clients map[chan ChatMessage]struct{}
+}
+
+func NewChatHub() *ChatHub {
+	return &ChatHub{
+		clients: make(map[chan ChatMessage]struct{}),
+	}
+}
+
+func (h *ChatHub) Subscribe() chan ChatMessage {
+	ch := make(chan ChatMessage, 16)
+	h.mu.Lock()
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *ChatHub) Unsubscribe(ch chan ChatMessage) {
+	h.mu.Lock()
+	delete(h.clients, ch)
+	h.mu.Unlock()
+	close(ch)
+}
+
+func (h *ChatHub) Broadcast(msg ChatMessage) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for ch := range h.clients {
+		select {
+		case ch <- msg:
+		default:
+			// Slow client, drop message
+		}
+	}
 }
 
 // handleChatPost adds a message to the conversation.
@@ -38,17 +81,26 @@ func (s *Server) handleChatPost(c *gin.Context) {
 		req.Source = "unknown"
 	}
 
-	var id int
+	var msg ChatMessage
 	err := s.DB.QueryRow(
-		`INSERT INTO chat_messages (source, message, galla) VALUES ($1, $2, $3) RETURNING id`,
+		`INSERT INTO chat_messages (source, message, galla) VALUES ($1, $2, $3) RETURNING id, created_at`,
 		req.Source, req.Message, req.Galla,
-	).Scan(&id)
+	).Scan(&msg.ID, &msg.CreatedAt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store message"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true, "id": id})
+	msg.Source = req.Source
+	msg.Message = req.Message
+	msg.Galla = req.Galla
+
+	// Broadcast to SSE subscribers
+	if s.ChatHub != nil {
+		s.ChatHub.Broadcast(msg)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "id": msg.ID})
 }
 
 // handleChatGet retrieves messages.
@@ -103,4 +155,35 @@ func (s *Server) handleChatGet(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"messages": messages})
+}
+
+// handleChatStream is an SSE endpoint. The browser opens this once and
+// receives every new message in real time — no polling needed.
+// GET /api/chat/stream
+func (s *Server) handleChatStream(c *gin.Context) {
+	if s.ChatHub == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "chat hub not initialized"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	ch := s.ChatHub.Subscribe()
+	defer s.ChatHub.Unsubscribe(ch)
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return false
+			}
+			data, _ := json.Marshal(msg)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
 }

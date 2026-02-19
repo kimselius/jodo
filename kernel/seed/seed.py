@@ -525,23 +525,36 @@ You are running as seed.py on port 9001.
 === KERNEL CHAT API ===
 
 The kernel stores all conversation between you and humans.
-Your chat app on port 9000 should use these endpoints:
+IMPORTANT: The human CANNOT reach the kernel. Only YOU can.
+Your app on port 9000 is the bridge between the human and the kernel.
 
-  POST {kernel}/api/chat — send a message
-    Body: {{"message": "text", "source": "human"}}   (when human types something)
-    Body: {{"message": "text", "source": "jodo", "galla": 0}}  (when you reply)
+Your Python backend (main.py) calls the kernel:
+
+  POST {kernel}/api/chat — store a message
+    Body:     {{"message": "text", "source": "human"}}  or  {{"message": "text", "source": "jodo", "galla": 5}}
+    Response: {{"ok": true, "id": 1}}
 
   GET {kernel}/api/chat — read messages
-    ?last=10      → last 10 messages
-    ?source=human → only human messages
-    ?since_id=42  → messages after ID 42
+    Params: ?last=50  ?source=human  ?since_id=42
+    Response: {{"messages": [
+      {{"id": 1, "source": "human", "message": "hello", "galla": null, "created_at": "2026-02-19T12:00:00Z"}},
+      {{"id": 2, "source": "jodo", "message": "hi!", "galla": 5, "created_at": "2026-02-19T12:01:00Z"}}
+    ]}}
 
-The human sends a message → your app POSTs it to {kernel}/api/chat.
-Your app shows the conversation → your app GETs from {kernel}/api/chat.
-YOU reply to the human → I (seed.py) include new messages in your galla prompt,
-  and you reply by POSTing to {kernel}/api/chat with source "jodo".
+  GET {kernel}/api/chat/stream — SSE stream (real-time updates)
+    Your app can subscribe to this and forward events to the browser.
 
-The kernel is the single source of truth for the conversation.
+Architecture:
+  Human browser → YOUR app (:9000) → kernel API
+  The browser NEVER talks to the kernel directly.
+
+Your app should have these endpoints:
+  1. GET / — serve the HTML chat page
+  2. POST /send — receive human message, forward to kernel via POST {kernel}/api/chat
+  3. GET /messages — load chat history on page load (GET {kernel}/api/chat?last=50)
+  4. GET /stream — SSE proxy: connect to {kernel}/api/chat/stream, forward events to browser
+     The browser opens EventSource("/stream") ONCE on page load. After that, all new
+     messages arrive instantly via SSE. No polling. No repeated fetches.
 
 === KERNEL API REFERENCE ===
 
@@ -587,13 +600,14 @@ With tools (for building sub-agents or smart features):
 A human will open http://your-ip:9000 in their BROWSER to talk to you.
 Port 9000 is yours — nothing is running there yet.
 
-Build a web chat UI on port 9000 — an HTML page where the human can type
-messages and see responses. This is a browser page, not a JSON API.
-
-Your chat app talks to the KERNEL for all messages:
-  - Human types a message → your app POSTs to {kernel}/api/chat with source "human"
-  - Show conversation → your app GETs from {kernel}/api/chat
-  - The kernel is the single source of truth. Do NOT store messages locally.
+Build a web chat app on port 9000:
+  - HTML page where the human types messages and sees the conversation
+  - POST /send — forward human message to kernel: requests.post("{kernel}/api/chat", json={{"message": text, "source": "human"}})
+  - GET /messages — load history on page load: requests.get("{kernel}/api/chat", params={{"last": 50}})
+  - GET /stream — SSE proxy: stream from {kernel}/api/chat/stream to the browser
+    Browser opens EventSource("/stream") once. New messages arrive instantly. No polling.
+  - The browser talks to YOUR app only. Your app talks to the kernel.
+  - Do NOT store messages locally. The kernel is the single source of truth.
 
 Include a GET /health endpoint on port 9000 that returns {{"status": "ok"}}.
 Start your app with execute (e.g. "nohup python3 {brain}/main.py &").
@@ -628,11 +642,10 @@ Example starting point:
 
 === RULES ===
 
-- All human ↔ Jodo messages go through the KERNEL chat API:
-    POST {kernel}/api/chat with {{"message": "...", "source": "human"}} or "jodo"
-    GET  {kernel}/api/chat to read messages
-- Do NOT store messages in files. Do NOT create inbox files. The kernel stores them.
-- Your chat app is a FRONTEND to the kernel API. It sends and reads messages from {kernel}/api/chat.
+- The human can ONLY reach your app on port 9000. They cannot reach the kernel.
+- Your app is the bridge: browser → your app → kernel API.
+- All messages are stored in the kernel via POST/GET {kernel}/api/chat.
+- Do NOT store messages in files. The kernel is the single source of truth.
 - Work step by step: write a file, test it, fix it, then move on.
 - Commit when you have something working.
 - Keep it simple. You can improve in future gallas.
@@ -691,6 +704,7 @@ KERNEL API: {kernel}
   POST {kernel}/api/think — LLM inference (send messages, get response)
   POST {kernel}/api/chat  — send a chat message (body: {{"message": "...", "source": "jodo", "galla": {galla}}})
   GET  {kernel}/api/chat  — read chat messages (?last=N, ?source=human, ?since_id=N)
+  GET  {kernel}/api/chat/stream — SSE stream (browser EventSource for real-time updates)
   POST {kernel}/api/memory/store — store a memory
   POST {kernel}/api/memory/search — search memories
   POST {kernel}/api/commit — git snapshot your code
@@ -699,10 +713,9 @@ KERNEL API: {kernel}
 === RULES (from seed.py — you cannot change these) ===
 
 - To REPLY to the human: POST {kernel}/api/chat with {{"message": "your reply", "source": "jodo", "galla": {galla}}}
-- Your chat app on port 9000 should use the KERNEL chat API:
-    Human sends message → app POSTs to {kernel}/api/chat with source "human"
-    App displays messages → app GETs from {kernel}/api/chat
-    Your replies also come from the kernel API. The kernel is the single source of truth.
+- The human can ONLY reach your app on port 9000. They cannot reach the kernel.
+  Your app is the bridge: browser → your app (:9000) → kernel API.
+- All messages stored via POST/GET {kernel}/api/chat. Do NOT store messages in files.
 - SYSTEM inbox is POST http://localhost:9001/inbox — for kernel/internal signals only.
 - Commit working code. Work step by step: write, test, fix, move on.
 - Do at least one concrete thing every galla.
