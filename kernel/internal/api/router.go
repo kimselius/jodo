@@ -15,17 +15,18 @@ import (
 
 // Server holds all dependencies for the API handlers.
 type Server struct {
-	Config   *config.Config
-	Genesis  *config.Genesis
-	LLM      *llm.Proxy
-	Memory   *memory.Store
-	Searcher *memory.Searcher
-	Process  *process.Manager
-	Git      *git.Manager
-	Growth   *growth.Logger
-	Audit    *audit.Logger
-	DB       *sql.DB
-	ChatHub  *ChatHub
+	Config      *config.Config
+	Genesis     *config.Genesis
+	GenesisPath string // path to genesis.yaml on disk
+	LLM         *llm.Proxy
+	Memory      *memory.Store
+	Searcher    *memory.Searcher
+	Process     *process.Manager
+	Git         *git.Manager
+	Growth      *growth.Logger
+	Audit       *audit.Logger
+	DB          *sql.DB
+	ChatHub     *ChatHub
 }
 
 // SetupRouter creates and configures the Gin router with all API routes.
@@ -37,7 +38,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -64,9 +65,9 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/chat", s.handleChatGet)
 		api.GET("/chat/stream", s.handleChatStream)
 		api.POST("/chat/ack", s.handleChatAck)
+		api.GET("/genesis/identity", s.handleGenesisIdentityGet)
+		api.PUT("/genesis/identity", s.handleGenesisIdentityPut)
 	}
-
-	// Dashboard is mounted externally in main.go
 
 	return r
 }

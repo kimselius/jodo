@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"jodo-kernel/internal/api"
 	"jodo-kernel/internal/audit"
 	"jodo-kernel/internal/config"
-	"jodo-kernel/internal/dashboard"
 	"database/sql"
 	"jodo-kernel/internal/db"
 	"jodo-kernel/internal/git"
@@ -92,31 +93,42 @@ func main() {
 	chatHub := api.NewChatHub()
 
 	server := &api.Server{
-		Config:   cfg,
-		Genesis:  genesis,
-		LLM:      proxy,
-		Memory:   memStore,
-		Searcher: memSearcher,
-		Process:  procManager,
-		Git:      gitManager,
-		Growth:   growthLogger,
-		Audit:    proxy.Audit,
-		DB:       database,
-		ChatHub:  chatHub,
+		Config:      cfg,
+		Genesis:     genesis,
+		GenesisPath: genesisPath,
+		LLM:         proxy,
+		Memory:      memStore,
+		Searcher:    memSearcher,
+		Process:     procManager,
+		Git:         gitManager,
+		Growth:      growthLogger,
+		Audit:       proxy.Audit,
+		DB:          database,
+		ChatHub:     chatHub,
 	}
 
 	router := server.SetupRouter()
 
-	// Wire up dashboard
-	dash := &dashboard.Handler{
-		Process:     procManager,
-		LLM:         proxy,
-		Git:         gitManager,
-		Growth:      growthLogger,
-		KernelStart: api.KernelStartTime,
+	// Serve Vue SPA (built frontend)
+	webDir := envOr("WEB_DIR", "/app/web")
+	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
+		router.Static("/assets", webDir+"/assets")
+		router.StaticFile("/favicon.svg", webDir+"/favicon.svg")
+		router.StaticFile("/favicon.ico", webDir+"/favicon.ico")
+
+		// SPA fallback: serve index.html for all non-API routes
+		indexPath := webDir + "/index.html"
+		router.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				c.JSON(404, gin.H{"error": "not found"})
+				return
+			}
+			c.File(indexPath)
+		})
+		log.Printf("[boot] serving SPA from %s", webDir)
+	} else {
+		log.Printf("[boot] no web directory at %s — SPA disabled", webDir)
 	}
-	// Override the dashboard route with the properly wired handler
-	router.GET("/dashboard", dash.Render)
 
 	// 5. Boot Jodo on VPS 2
 	go bootJodo(cfg, procManager, gitManager, growthLogger)
@@ -211,7 +223,7 @@ func maintenanceLoop(cfg *config.Config, database *sql.DB, gitMgr *git.Manager, 
 			}
 
 			if !appOK && time.Since(lastAppNudge) > 15*time.Minute {
-				msg := fmt.Sprintf("[KERNEL] Your app on port %d is not reachable. The human can't talk to you. Check if main.py is running (execute 'curl -s http://localhost:%d/health'). If it's not running, start it. If it doesn't exist, build it.",
+				msg := fmt.Sprintf("[KERNEL] Your app on port %d is not responding to health checks. Make sure main.py is running with GET /health on port %d.",
 					cfg.Jodo.AppPort, cfg.Jodo.AppPort)
 				if err := proc.WriteInbox(msg); err != nil {
 					log.Printf("[maintenance] inbox write failed: %v", err)

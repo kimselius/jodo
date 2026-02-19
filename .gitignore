@@ -32,6 +32,10 @@ Thumbs.db
 .old/
 .claude/
 
+# Frontend build
+kernel/web/node_modules/
+kernel/web/dist/
+
 # Logs (local dev only — production logs live on the servers)
 *.log
 *.jsonl
