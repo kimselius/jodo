@@ -134,8 +134,8 @@ export function useSetup() {
   const provisionSteps = ref<ProvisionStep[]>([])
   const provisioned = ref(false)
 
-  // Kernel URL step
-  const kernelUrl = ref('')
+  // Kernel URL step — prefill from browser URL
+  const kernelUrl = ref(`${window.location.protocol}//${window.location.host}`)
 
   // Providers step
   const providers = ref<ProviderSetup[]>(JSON.parse(JSON.stringify(DEFAULT_PROVIDERS)))

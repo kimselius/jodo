@@ -10,6 +10,9 @@ RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 
+# Pre-install Python packages needed by seed.py and Jodo's first boot
+RUN pip install --no-cache-dir requests fastapi uvicorn
+
 # Create brain directory
 RUN mkdir -p /opt/jodo/brain
 
