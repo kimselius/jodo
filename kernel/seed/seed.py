@@ -325,18 +325,27 @@ def get_budget():
         return {"error": "could not reach kernel"}
 
 
-def get_chat_messages(since_id=0):
-    """Fetch chat messages from kernel since a given ID."""
+def get_unread_chat_messages():
+    """Fetch unread chat messages from kernel."""
     try:
-        params = {}
-        if since_id > 0:
-            params["since_id"] = since_id
-        resp = requests.get(f"{KERNEL}/api/chat", params=params, timeout=10)
+        resp = requests.get(f"{KERNEL}/api/chat", params={"unread": "true"}, timeout=10)
         data = resp.json()
         return data.get("messages", [])
     except Exception as e:
         log(f"Chat fetch failed: {e}")
         return []
+
+
+def ack_chat_messages(up_to_id):
+    """Mark chat messages as read up to a given ID."""
+    try:
+        requests.post(
+            f"{KERNEL}/api/chat/ack",
+            json={"up_to_id": up_to_id},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Chat ack failed: {e}")
 
 
 def post_chat_reply(message, galla_num):
@@ -535,11 +544,15 @@ Your Python backend (main.py) calls the kernel:
     Response: {{"ok": true, "id": 1}}
 
   GET {kernel}/api/chat — read messages
-    Params: ?last=50  ?source=human  ?since_id=42
+    Params: ?last=50  ?source=human  ?since_id=42  ?unread=true
     Response: {{"messages": [
-      {{"id": 1, "source": "human", "message": "hello", "galla": null, "created_at": "2026-02-19T12:00:00Z"}},
-      {{"id": 2, "source": "jodo", "message": "hi!", "galla": 5, "created_at": "2026-02-19T12:01:00Z"}}
+      {{"id": 1, "source": "human", "message": "hello", "galla": null, "read_at": null, "created_at": "2026-02-19T12:00:00Z"}},
+      {{"id": 2, "source": "jodo", "message": "hi!", "galla": 5, "read_at": "2026-02-19T12:02:00Z", "created_at": "2026-02-19T12:01:00Z"}}
     ]}}
+
+  POST {kernel}/api/chat/ack — mark messages as read
+    Body:     {{"up_to_id": 42}}
+    Response: {{"ok": true, "marked": 3}}
 
   GET {kernel}/api/chat/stream — SSE stream (real-time updates)
     Your app can subscribe to this and forward events to the browser.
@@ -690,7 +703,7 @@ This is galla {galla}. You have been alive for {galla} gallas.
 WHAT YOU DID LAST GALLA:
 {actions_summary}
 
-HUMAN CONVERSATION (new messages since last galla):
+HUMAN CONVERSATION (unread messages — these are new since you last checked):
 {chat}
 
 SYSTEM INBOX (kernel nudges, internal events):
@@ -703,7 +716,8 @@ YOUR TOOLS: read, write, execute, restart (emergency only).
 KERNEL API: {kernel}
   POST {kernel}/api/think — LLM inference (send messages, get response)
   POST {kernel}/api/chat  — send a chat message (body: {{"message": "...", "source": "jodo", "galla": {galla}}})
-  GET  {kernel}/api/chat  — read chat messages (?last=N, ?source=human, ?since_id=N)
+  GET  {kernel}/api/chat  — read chat messages (?last=N, ?source=human, ?since_id=N, ?unread=true)
+  POST {kernel}/api/chat/ack — mark messages as read (body: {{"up_to_id": N}})
   GET  {kernel}/api/chat/stream — SSE stream (browser EventSource for real-time updates)
   POST {kernel}/api/memory/store — store a memory
   POST {kernel}/api/memory/search — search memories
@@ -784,15 +798,6 @@ def live():
         log("Galla 0 — Birth")
         remember("I have been born. Galla 0. Running seed.py.", tags=["birth"])
 
-    # Track the last chat message ID we've seen
-    last_chat_id = 0
-    # On resume, get existing chat to find our starting point
-    if galla > 0:
-        existing = get_chat_messages()
-        if existing:
-            last_chat_id = existing[-1].get("id", 0)
-            log(f"Chat: resuming from message ID {last_chat_id}")
-
     # 5. Life loop
     while alive:
         log(f"Galla {galla} — awake")
@@ -802,11 +807,12 @@ def live():
         if inbox_messages:
             log(f"Inbox: {len(inbox_messages)} system messages")
 
-        # Fetch new chat messages from kernel
-        chat_messages = get_chat_messages(since_id=last_chat_id)
+        # Fetch unread chat messages from kernel
+        chat_messages = get_unread_chat_messages()
         if chat_messages:
-            last_chat_id = chat_messages[-1].get("id", last_chat_id)
-            log(f"Chat: {len(chat_messages)} new messages")
+            max_id = chat_messages[-1].get("id", 0)
+            log(f"Chat: {len(chat_messages)} unread messages (up to ID {max_id})")
+            ack_chat_messages(max_id)
 
         if galla == 0:
             prompt = birth_prompt(genesis)

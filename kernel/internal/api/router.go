@@ -63,6 +63,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.POST("/chat", s.handleChatPost)
 		api.GET("/chat", s.handleChatGet)
 		api.GET("/chat/stream", s.handleChatStream)
+		api.POST("/chat/ack", s.handleChatAck)
 	}
 
 	// Dashboard is mounted externally in main.go

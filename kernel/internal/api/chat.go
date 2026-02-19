@@ -14,11 +14,12 @@ import (
 )
 
 type ChatMessage struct {
-	ID        int       `json:"id"`
-	Source    string    `json:"source"`
-	Message   string    `json:"message"`
-	Galla     *int      `json:"galla,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int        `json:"id"`
+	Source    string     `json:"source"`
+	Message   string     `json:"message"`
+	Galla     *int       `json:"galla,omitempty"`
+	ReadAt    *time.Time `json:"read_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // ChatHub manages SSE subscribers for real-time chat updates.
@@ -104,9 +105,9 @@ func (s *Server) handleChatPost(c *gin.Context) {
 }
 
 // handleChatGet retrieves messages.
-// GET /api/chat?last=10&source=human&since_id=42
+// GET /api/chat?last=10&source=human&since_id=42&unread=true
 func (s *Server) handleChatGet(c *gin.Context) {
-	query := `SELECT id, source, message, galla, created_at FROM chat_messages WHERE 1=1`
+	query := `SELECT id, source, message, galla, read_at, created_at FROM chat_messages WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
 
@@ -120,6 +121,10 @@ func (s *Server) handleChatGet(c *gin.Context) {
 		query += ` AND id > $` + strconv.Itoa(argIdx)
 		args = append(args, sinceID)
 		argIdx++
+	}
+
+	if c.Query("unread") == "true" {
+		query += ` AND read_at IS NULL`
 	}
 
 	query += ` ORDER BY id ASC`
@@ -144,17 +149,45 @@ func (s *Server) handleChatGet(c *gin.Context) {
 	for rows.Next() {
 		var m ChatMessage
 		var galla sql.NullInt32
-		if err := rows.Scan(&m.ID, &m.Source, &m.Message, &galla, &m.CreatedAt); err != nil {
+		var readAt sql.NullTime
+		if err := rows.Scan(&m.ID, &m.Source, &m.Message, &galla, &readAt, &m.CreatedAt); err != nil {
 			continue
 		}
 		if galla.Valid {
 			g := int(galla.Int32)
 			m.Galla = &g
 		}
+		if readAt.Valid {
+			m.ReadAt = &readAt.Time
+		}
 		messages = append(messages, m)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"messages": messages})
+}
+
+// handleChatAck marks messages as read up to a given ID.
+// POST /api/chat/ack  {"up_to_id": 42}
+func (s *Server) handleChatAck(c *gin.Context) {
+	var req struct {
+		UpToID int `json:"up_to_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.UpToID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "up_to_id required (positive integer)"})
+		return
+	}
+
+	result, err := s.DB.Exec(
+		`UPDATE chat_messages SET read_at = NOW() WHERE id <= $1 AND read_at IS NULL`,
+		req.UpToID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark as read"})
+		return
+	}
+
+	count, _ := result.RowsAffected()
+	c.JSON(http.StatusOK, gin.H{"ok": true, "marked": count})
 }
 
 // handleChatStream is an SSE endpoint. The browser opens this once and

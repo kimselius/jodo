@@ -80,8 +80,19 @@ func RunMigrations(db *sql.DB) error {
 			source VARCHAR(20) NOT NULL,
 			message TEXT NOT NULL,
 			galla INTEGER,
+			read_at TIMESTAMPTZ,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+
+		// Migration: add read_at if table already exists without it
+		`DO $$ BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'chat_messages' AND column_name = 'read_at'
+			) THEN
+				ALTER TABLE chat_messages ADD COLUMN read_at TIMESTAMPTZ;
+			END IF;
+		END $$`,
 	}
 
 	for _, m := range migrations {
