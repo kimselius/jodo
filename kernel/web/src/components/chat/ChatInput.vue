@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import Button from '@/components/ui/Button.vue'
 
 const props = defineProps<{ sending: boolean }>()
@@ -7,6 +7,8 @@ const emit = defineEmits<{ send: [text: string] }>()
 
 const text = ref('')
 const textarea = ref<HTMLTextAreaElement>()
+
+onMounted(() => textarea.value?.focus())
 
 function handleSend() {
   if (!text.value.trim() || props.sending) return

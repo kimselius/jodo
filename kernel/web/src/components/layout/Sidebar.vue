@@ -139,6 +139,22 @@ defineEmits<{ close: [] }>()
           {{ badges[item.path] > 99 ? '99+' : badges[item.path] }}
         </span>
       </RouterLink>
+
+      <!-- Jodo's App — external link, only when Jodo is alive -->
+      <a
+        v-if="jodoStatus !== 'dead' && jodoStatus !== 'unknown'"
+        href="/jodo/"
+        target="_blank"
+        class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors"
+      >
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+        </svg>
+        <span class="flex-1">Jodo's App</span>
+        <svg class="h-3 w-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+        </svg>
+      </a>
     </nav>
 
     <Separator />

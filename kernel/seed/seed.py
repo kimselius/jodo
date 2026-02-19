@@ -349,6 +349,21 @@ def commit(message):
         log(f"Commit failed: {e}")
 
 
+def post_galla(plan=None, summary=None, actions_count=None):
+    """Post galla plan/summary to kernel for the Growth timeline."""
+    payload = {"galla": galla}
+    if plan is not None:
+        payload["plan"] = plan
+    if summary is not None:
+        payload["summary"] = summary
+    if actions_count is not None:
+        payload["actions_count"] = actions_count
+    try:
+        kernel_http.post(f"{KERNEL}/api/galla", json=payload, timeout=10)
+    except Exception as e:
+        log(f"Galla post failed: {e}")
+
+
 def get_genesis():
     """Read genesis from kernel."""
     try:
@@ -726,10 +741,12 @@ def live():
             if galla == 0:
                 # Birth: no planning, just execute first tasks
                 prompt = birth_prompt(genesis)
-                _, actions = think_and_act(
+                post_galla(plan="(birth — no planning phase)")
+                content, actions = think_and_act(
                     messages=[{"role": "user", "content": prompt}],
                     intent="code",
                 )
+                post_galla(summary=content or "", actions_count=len(actions))
             else:
                 # Phase 1: Plan (read + execute only — inspect, then plan)
                 set_phase("planning")
@@ -741,6 +758,7 @@ def live():
                 )
                 if plan:
                     log(f"Plan: {plan[:200]}")
+                post_galla(plan=plan or "")
 
                 # Phase 2: Execute the plan (with tools)
                 set_phase("thinking")
@@ -749,10 +767,11 @@ def live():
                     {"role": "assistant", "content": plan},
                     {"role": "user", "content": "Good plan. Now execute it. Use your tools."},
                 ]
-                _, actions = think_and_act(
+                content, actions = think_and_act(
                     messages=exec_messages,
                     intent="code",
                 )
+                post_galla(summary=content or "", actions_count=len(actions))
 
             last_actions = actions
 

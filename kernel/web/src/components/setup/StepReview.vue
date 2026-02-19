@@ -5,6 +5,7 @@ import Card from '@/components/ui/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import type { ProviderSetup, GenesisSetup } from '@/types/setup'
 import { api } from '@/lib/api'
+import { markSetupComplete } from '@/router'
 
 const props = defineProps<{
   vps: { host: string; sshUser: string }
@@ -48,6 +49,7 @@ async function handleBirth() {
           if (statusRes.jodo.status !== 'dead') {
             clearInterval(poll)
             birthStatus.value = 'Jodo is alive!'
+            markSetupComplete()
             setTimeout(() => router.push('/'), 1500)
             return
           }

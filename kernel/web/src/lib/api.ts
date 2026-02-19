@@ -3,7 +3,7 @@ import type { StatusResponse, BudgetResponse } from '@/types/status'
 import type { Genesis, IdentityUpdate } from '@/types/genesis'
 import type { CommitEntry } from '@/types/history'
 import type { MemoryEntry } from '@/types/memory'
-import type { GrowthEvent } from '@/types/growth'
+import type { GrowthEvent, GallaEntry } from '@/types/growth'
 import type {
   SetupStatus, SSHGenerateResponse, SSHVerifyResponse,
   TestProviderResponse, ProviderSetup, GenesisSetup,
@@ -80,6 +80,10 @@ export const api = {
   // Growth
   getGrowth(limit = 50) {
     return request<{ events: GrowthEvent[] }>(`/api/growth?limit=${limit}`)
+  },
+
+  getGallas(limit = 50) {
+    return request<{ gallas: GallaEntry[] }>(`/api/galla?limit=${limit}`)
   },
 
   // Lifecycle

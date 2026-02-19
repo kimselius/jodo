@@ -2,7 +2,8 @@ Before taking any action, PLAN this galla. Think about:
 
 1. Did the human say something? If so, responding is your top priority.
 2. Is your app on port __APP_PORT__ healthy? If not, fix it first.
-3. What's the single most impactful thing you can do this galla?
+3. Is your web UI working? Can the human see something useful at __KERNEL_URL__/jodo/?
+4. What's the single most impactful thing you can do this galla?
 
 You can use read and execute to inspect your environment (check files,
 running processes, etc.) but do NOT write or modify anything yet.

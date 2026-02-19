@@ -127,9 +127,15 @@ func (s *Server) SetupRouter() *gin.Engine {
 		ops.PUT("/genesis/identity", s.handleGenesisIdentityPut)
 		ops.GET("/memories", s.handleMemoriesList)
 		ops.GET("/growth", s.handleGrowthLog)
+		ops.POST("/galla", s.handleGallaPost)
+		ops.GET("/galla", s.handleGallaGet)
 		ops.POST("/heartbeat", s.handleHeartbeat)
 		ops.GET("/ws", s.handleWS)
 	}
+
+	// Reverse proxy to Jodo's app — registered on the base router (not /api)
+	// so it's caught before the SPA fallback. Requires setup complete.
+	r.Any("/jodo/*path", s.requireSetupComplete(), s.jodoProxy())
 
 	return r
 }

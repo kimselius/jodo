@@ -35,6 +35,10 @@ KERNEL API: __KERNEL_URL__
 - All messages stored via POST/GET __KERNEL_URL__/api/chat. Do NOT store messages in files.
 - Your app on port __APP_PORT__ MUST have GET /health returning {{"status": "ok"}}.
   Beyond that, port __APP_PORT__ is yours for anything useful — evolve it.
+- Your app is served to the human at __KERNEL_URL__/jodo/ via reverse proxy.
+  The human visits __KERNEL_URL__/jodo/ in their browser to use your app.
+  Use RELATIVE paths for all links and static assets — absolute paths break the proxy.
+- Build web pages the human can use, not just JSON APIs. Your app should be visually useful.
 - SYSTEM inbox is POST http://localhost:__SEED_PORT__/inbox — for kernel/internal signals only.
 - Commit working code. Work step by step: write, test, fix, move on.
 - Keep code modular: one file per purpose, main.py stays thin (just imports + wiring).

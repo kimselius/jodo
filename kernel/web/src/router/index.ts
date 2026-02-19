@@ -4,6 +4,10 @@ import { api } from '@/lib/api'
 let setupChecked = false
 let isSetupComplete = true // assume complete until checked
 
+export function markSetupComplete() {
+  isSetupComplete = true
+}
+
 const router = createRouter({
   history: createWebHistory(),
   routes: [

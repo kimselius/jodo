@@ -143,6 +143,16 @@ func RunMigrations(db *sql.DB) error {
 			UNIQUE(provider_name, model_key)
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS galla_log (
+			id SERIAL PRIMARY KEY,
+			galla INTEGER NOT NULL UNIQUE,
+			plan TEXT,
+			summary TEXT,
+			actions_count INTEGER DEFAULT 0,
+			started_at TIMESTAMPTZ DEFAULT NOW(),
+			completed_at TIMESTAMPTZ
+		)`,
+
 		`CREATE TABLE IF NOT EXISTS genesis (
 			id                 INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 			name               VARCHAR(100) NOT NULL DEFAULT 'Jodo',
