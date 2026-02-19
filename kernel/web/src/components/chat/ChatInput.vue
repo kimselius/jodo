@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import Button from '@/components/ui/Button.vue'
 
 const props = defineProps<{ sending: boolean }>()
@@ -12,7 +12,7 @@ function handleSend() {
   if (!text.value.trim() || props.sending) return
   emit('send', text.value)
   text.value = ''
-  textarea.value?.focus()
+  nextTick(() => textarea.value?.focus())
 }
 
 function handleKeydown(e: KeyboardEvent) {

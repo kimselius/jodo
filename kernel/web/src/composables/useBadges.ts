@@ -20,6 +20,7 @@ const badges = reactive<Record<string, number>>({
 
 // Track whether the module has been initialized
 let initialized = false
+let currentPath = '/'
 
 function init() {
   if (initialized) return
@@ -29,6 +30,13 @@ function init() {
   onWSEvent((event) => {
     const route = eventToRoute[event.type]
     if (route && route in badges) {
+      // Don't badge the page the user is currently viewing
+      if (route === currentPath) return
+      // Only badge Jodo's messages, not the human's own
+      if (event.type === 'chat') {
+        const data = event.data as { source?: string }
+        if (data.source === 'human') return
+      }
       badges[route]++
     }
   })
@@ -46,6 +54,7 @@ export function useBadges() {
   watch(
     () => route.path,
     (path) => {
+      currentPath = path
       if (path in badges) {
         badges[path] = 0
       }
