@@ -1,14 +1,17 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/ssh"
 	"jodo-kernel/internal/config"
 	"jodo-kernel/internal/crypto"
@@ -322,10 +325,13 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 		}
 	}
 
-	// Set default routing intent preferences if not set
+	// Auto-generate routing from saved models' capabilities
 	if s.ConfigStore.GetConfig("routing.intent_preferences") == "" {
-		s.ConfigStore.SetConfig("routing.intent_preferences",
-			`{"code":["ollama","claude","openai"],"chat":["ollama","openai","claude"],"embed":["ollama","openai"],"quick":["ollama","openai"],"repair":["claude","ollama","openai"]}`)
+		prefs := s.buildRoutingFromModels()
+		if len(prefs) > 0 {
+			prefsJSON, _ := json.Marshal(prefs)
+			s.ConfigStore.SetConfig("routing.intent_preferences", string(prefsJSON))
+		}
 	}
 
 	// Mark setup complete
@@ -433,6 +439,58 @@ func (s *Server) handleSetupProvision(c *gin.Context) {
 
 	log.Printf("[setup] provision %s@%s brain=%s success=%v", sshUser, host, req.BrainPath, allOk)
 	c.JSON(http.StatusOK, gin.H{"success": allOk, "steps": results})
+}
+
+// buildRoutingFromModels queries saved models and builds intent_preferences
+// based on each model's capabilities, sorted by quality (highest first).
+func (s *Server) buildRoutingFromModels() map[string][]string {
+	rows, err := s.DB.Query(
+		`SELECT pm.model_key, pm.provider_name, pm.capabilities, pm.quality
+		 FROM provider_models pm
+		 JOIN providers p ON p.name = pm.provider_name
+		 WHERE p.enabled = true AND pm.enabled = true
+		 ORDER BY pm.quality DESC`,
+	)
+	if err != nil {
+		log.Printf("[setup] failed to query models for routing: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	type modelEntry struct {
+		ref     string // model_key@provider
+		quality int
+	}
+
+	// Collect models per capability
+	capModels := make(map[string][]modelEntry)
+	for rows.Next() {
+		var modelKey, providerName string
+		var caps []string
+		var quality int
+		if err := rows.Scan(&modelKey, &providerName, pq.Array(&caps), &quality); err != nil {
+			continue
+		}
+		ref := modelKey + "@" + providerName
+		for _, cap := range caps {
+			capModels[cap] = append(capModels[cap], modelEntry{ref: ref, quality: quality})
+		}
+	}
+
+	// Sort each capability's models by quality descending
+	prefs := make(map[string][]string)
+	for cap, entries := range capModels {
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].quality > entries[j].quality
+		})
+		refs := make([]string, len(entries))
+		for i, e := range entries {
+			refs[i] = e.ref
+		}
+		prefs[cap] = refs
+	}
+
+	return prefs
 }
 
 // POST /api/setup/discover — model discovery during setup (before setup is complete)

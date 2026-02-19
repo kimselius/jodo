@@ -77,6 +77,15 @@ async function handleModelDisable(providerName: string, modelKey: string) {
     error.value = e instanceof Error ? e.message : 'Failed to disable model'
   }
 }
+
+async function handleCapabilityUpdate(providerName: string, modelKey: string, capabilities: string[]) {
+  try {
+    await api.updateModel(providerName, modelKey, { capabilities })
+    emit('saved')
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to update capabilities'
+  }
+}
 </script>
 
 <template>
@@ -129,6 +138,7 @@ async function handleModelDisable(providerName: string, modelKey: string) {
           :enabled-models="enabledModelsFor(p)"
           @enable="(model) => handleModelEnable(p.name, model)"
           @disable="(key) => handleModelDisable(p.name, key)"
+          @update-capabilities="(key, caps) => handleCapabilityUpdate(p.name, key, caps)"
         />
 
         <div class="flex items-center gap-3">

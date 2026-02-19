@@ -51,6 +51,13 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
     provider.models.splice(idx, 1)
   }
 }
+
+function handleCapabilityUpdate(provider: ProviderSetup, modelKey: string, capabilities: string[]) {
+  const model = provider.models.find(m => m.model_key === modelKey)
+  if (model) {
+    model.capabilities = capabilities
+  }
+}
 </script>
 
 <template>
@@ -131,6 +138,7 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
           :api-key="provider.api_key"
           @enable="(model) => handleModelEnable(provider, model)"
           @disable="(key) => handleModelDisable(provider, key)"
+          @update-capabilities="(key, caps) => handleCapabilityUpdate(provider, key, caps)"
         />
       </template>
     </Card>

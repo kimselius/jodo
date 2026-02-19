@@ -20,7 +20,6 @@ FROM alpine:3.19
 RUN apk add --no-cache openssh-client git
 COPY --from=backend /build/kernel /app/kernel
 COPY --from=frontend /build/web/dist /app/web
-COPY configs/ /app/configs/
 COPY seed/ /app/seed/
 WORKDIR /app
 CMD ["./kernel"]
