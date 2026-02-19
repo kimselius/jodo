@@ -17,6 +17,11 @@ ok()    { echo -e "${GREEN}[jodo]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[jodo]${NC} $1"; }
 err()   { echo -e "${RED}[jodo]${NC} $1" >&2; }
 
+# Run docker compose with the correct file and env
+dc() {
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+}
+
 generate_password() {
   openssl rand -base64 24 | tr -d '/+=' | head -c 32
 }
@@ -78,8 +83,7 @@ EOF
 
   if [[ "$JODO_MODE" == "docker" ]]; then
     info "Building Jodo Docker image..."
-    cd "$SCRIPT_DIR/kernel"
-    docker compose --profile docker-mode build jodo
+    dc --profile docker-mode build jodo
     ok "Jodo container image built."
     echo ""
   fi
@@ -97,42 +101,40 @@ cmd_start() {
     exit 1
   fi
   info "Starting Jodo..."
-  cd "$SCRIPT_DIR/kernel"
 
   if grep -q "JODO_MODE=docker" "$ENV_FILE" 2>/dev/null; then
-    docker compose --profile docker-mode up -d
+    dc --profile docker-mode up -d --build
     ok "Jodo is starting (Docker mode). Open http://localhost:8080"
   else
-    docker compose up -d
+    dc up -d --build
     ok "Jodo is starting (VPS mode). Open http://localhost:8080"
   fi
 }
 
 cmd_stop() {
   info "Stopping Jodo..."
-  cd "$SCRIPT_DIR/kernel"
   if grep -q "JODO_MODE=docker" "$ENV_FILE" 2>/dev/null; then
-    docker compose --profile docker-mode down
+    dc --profile docker-mode down
   else
-    docker compose down
+    dc down
   fi
   ok "Jodo stopped."
 }
 
 cmd_logs() {
-  cd "$SCRIPT_DIR/kernel"
-  docker compose logs -f kernel
+  local service="${1:-kernel}"
+  dc logs -f "$service"
 }
 
 cmd_help() {
   echo "Usage: ./jodo.sh <command>"
   echo ""
   echo "Commands:"
-  echo "  setup    Generate .env file with encryption key and database password"
-  echo "  start    Start Jodo (docker-compose up)"
-  echo "  stop     Stop Jodo (docker-compose down)"
-  echo "  logs     Follow kernel logs"
-  echo "  help     Show this help message"
+  echo "  setup              Generate .env file with encryption key and database password"
+  echo "  start              Start Jodo (docker compose up --build)"
+  echo "  stop               Stop Jodo (docker compose down)"
+  echo "  logs [service]     Follow logs (default: kernel, also: postgres, jodo)"
+  echo "  help               Show this help message"
   echo ""
 }
 
@@ -140,7 +142,7 @@ case "${1:-help}" in
   setup) cmd_setup ;;
   start) cmd_start ;;
   stop)  cmd_stop  ;;
-  logs)  cmd_logs  ;;
+  logs)  cmd_logs "${2:-}" ;;
   help)  cmd_help  ;;
   *)     err "Unknown command: $1"; cmd_help; exit 1 ;;
 esac
