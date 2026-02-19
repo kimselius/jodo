@@ -34,8 +34,8 @@ async function testProvider(provider: ProviderSetup) {
   }
 }
 
-function hasAtLeastOneProvider(): boolean {
-  return props.providers.some(p => p.enabled)
+function hasAtLeastOneModel(): boolean {
+  return props.providers.some(p => p.enabled && p.models.length > 0)
 }
 
 function handleModelEnable(provider: ProviderSetup, model: { model_key: string; model_name: string; input_cost_per_1m: number; output_cost_per_1m: number; capabilities: string[]; quality: number }) {
@@ -58,7 +58,7 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
     <div>
       <h2 class="text-lg font-semibold">LLM Providers</h2>
       <p class="text-sm text-muted-foreground mt-1">
-        Configure the AI models Jodo will use to think. Ollama (local, free) is enabled by default.
+        Configure the AI models Jodo will use to think. Enable a provider, test the connection, then discover and select models.
       </p>
     </div>
 
@@ -126,6 +126,8 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
         <ModelDiscovery
           :provider-name="provider.name"
           :enabled-models="provider.models"
+          :setup-mode="true"
+          :base-url="provider.base_url"
           @enable="(model) => handleModelEnable(provider, model)"
           @disable="(key) => handleModelDisable(provider, key)"
         />
@@ -134,7 +136,7 @@ function handleModelDisable(provider: ProviderSetup, modelKey: string) {
 
     <div class="flex justify-between pt-4">
       <Button variant="ghost" @click="$emit('back')">Back</Button>
-      <Button @click="$emit('next')" :disabled="!hasAtLeastOneProvider()">Next</Button>
+      <Button @click="$emit('next')" :disabled="!hasAtLeastOneModel()">Next</Button>
     </div>
   </div>
 </template>

@@ -2,7 +2,7 @@ import { ref, reactive, computed } from 'vue'
 import { api } from '@/lib/api'
 import type { ProviderSetup, GenesisSetup, ProvisionStep } from '@/types/setup'
 
-// Default model configs matching the previous config.yaml
+// Default providers — models start empty, discovered during setup
 const DEFAULT_PROVIDERS: ProviderSetup[] = [
   {
     name: 'ollama',
@@ -11,24 +11,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: 'http://host.docker.internal:11434',
     monthly_budget: 0,
     emergency_reserve: 0,
-    models: [
-      {
-        model_key: 'glm-4',
-        model_name: 'glm-4.7-flash:latest',
-        input_cost_per_1m: 0,
-        output_cost_per_1m: 0,
-        capabilities: ['code', 'chat', 'quick', 'tools'],
-        quality: 5,
-      },
-      {
-        model_key: 'qwen3-embed-8b',
-        model_name: 'qwen3-embedding:8b',
-        input_cost_per_1m: 0,
-        output_cost_per_1m: 0,
-        capabilities: ['embed'],
-        quality: 7,
-      },
-    ],
+    models: [],
   },
   {
     name: 'claude',
@@ -37,16 +20,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: '',
     monthly_budget: 20,
     emergency_reserve: 2,
-    models: [
-      {
-        model_key: 'claude-sonnet',
-        model_name: 'claude-sonnet-4-20250514',
-        input_cost_per_1m: 3.0,
-        output_cost_per_1m: 15.0,
-        capabilities: ['code', 'chat', 'reasoning', 'repair', 'tools'],
-        quality: 9,
-      },
-    ],
+    models: [],
   },
   {
     name: 'openai',
@@ -55,16 +29,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: '',
     monthly_budget: 10,
     emergency_reserve: 1,
-    models: [
-      {
-        model_key: 'gpt-4o-mini',
-        model_name: 'gpt-4o-mini',
-        input_cost_per_1m: 0.15,
-        output_cost_per_1m: 0.6,
-        capabilities: ['code', 'chat', 'tools'],
-        quality: 6,
-      },
-    ],
+    models: [],
   },
 ]
 

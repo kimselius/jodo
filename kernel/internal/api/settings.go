@@ -294,6 +294,10 @@ func (s *Server) discoverOllamaModels(c *gin.Context) {
 		}
 	}
 
+	s.discoverOllamaModelsWithURL(c, baseURL)
+}
+
+func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(baseURL + "/api/tags")
 	if err != nil {

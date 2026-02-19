@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useSetup } from '@/composables/useSetup'
 import StepVPS from '@/components/setup/StepVPS.vue'
 import StepServerSetup from '@/components/setup/StepServerSetup.vue'
@@ -8,6 +9,16 @@ import StepGenesis from '@/components/setup/StepGenesis.vue'
 import StepReview from '@/components/setup/StepReview.vue'
 
 const setup = useSetup()
+
+const stepIndex = computed(() => setup.currentStepIndex())
+const stepLabels: Record<string, string> = {
+  vps: 'SSH',
+  'server-setup': 'Server',
+  'kernel-url': 'Kernel URL',
+  providers: 'Providers',
+  genesis: 'Genesis',
+  review: 'Review',
+}
 </script>
 
 <template>
@@ -26,16 +37,30 @@ const setup = useSetup()
     </header>
 
     <!-- Step indicator -->
-    <div class="border-b border-border px-6 py-3">
-      <div class="max-w-3xl mx-auto flex gap-1">
-        <div
-          v-for="(step, i) in setup.steps"
-          :key="step"
-          :class="[
-            'h-1 flex-1 rounded-full transition-colors',
-            i <= setup.currentStepIndex() ? 'bg-primary' : 'bg-muted'
-          ]"
-        />
+    <div class="border-b border-border px-6 py-4">
+      <div class="max-w-3xl mx-auto">
+        <div class="flex gap-1.5 mb-2">
+          <div
+            v-for="(_step, i) in setup.steps.value"
+            :key="_step"
+            class="h-1.5 flex-1 rounded-full transition-colors duration-300"
+            :style="{
+              backgroundColor: i <= stepIndex
+                ? 'var(--color-primary)'
+                : 'var(--color-secondary)'
+            }"
+          />
+        </div>
+        <div class="flex justify-between">
+          <span
+            v-for="(_step, i) in setup.steps.value"
+            :key="_step"
+            class="text-[10px] flex-1 text-center transition-colors"
+            :class="i <= stepIndex ? 'text-primary font-medium' : 'text-muted-foreground'"
+          >
+            {{ stepLabels[_step] || _step }}
+          </span>
+        </div>
       </div>
     </div>
 

@@ -151,6 +151,13 @@ export const api = {
     })
   },
 
+  setupDiscoverModels(provider: string, baseUrl?: string) {
+    return request<{ models: unknown[]; error?: string }>('/api/setup/discover', {
+      method: 'POST',
+      body: JSON.stringify({ provider, base_url: baseUrl }),
+    })
+  },
+
   // Settings
   getSettingsProviders() {
     return request<{ providers: ProviderInfo[] }>('/api/settings/providers')

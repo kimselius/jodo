@@ -39,10 +39,15 @@ interface DiscoveredModel {
   size_bytes?: number
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   providerName: string
   enabledModels: EnabledModel[]
-}>()
+  setupMode?: boolean
+  baseUrl?: string
+}>(), {
+  setupMode: false,
+  baseUrl: '',
+})
 
 const emit = defineEmits<{
   enable: [model: EnabledModel]
@@ -61,7 +66,9 @@ async function discover() {
   discovering.value = true
   discoveryError.value = ''
   try {
-    const res = await api.discoverModels(props.providerName)
+    const res = props.setupMode
+      ? await api.setupDiscoverModels(props.providerName, props.baseUrl || undefined)
+      : await api.discoverModels(props.providerName)
     discovered.value = res.models as DiscoveredModel[]
     if (res.error) discoveryError.value = res.error
     hasDiscovered.value = true
@@ -180,9 +187,9 @@ function formatSize(bytes: number): string {
       </div>
     </div>
 
-    <!-- Currently enabled models (always visible) -->
+    <!-- Currently enabled models (when discovery panel is closed) -->
     <div v-if="enabledModels.length > 0 && !hasDiscovered" class="space-y-1">
-      <h4 class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Enabled Models</h4>
+      <h4 class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Selected Models</h4>
       <div
         v-for="m in enabledModels"
         :key="m.model_key"
@@ -194,6 +201,11 @@ function formatSize(bytes: number): string {
         </span>
         <span class="text-muted-foreground">q{{ m.quality }}</span>
       </div>
+    </div>
+
+    <!-- Hint when no models selected yet -->
+    <div v-if="enabledModels.length === 0 && !hasDiscovered" class="text-xs text-muted-foreground italic">
+      No models selected. Click "{{ buttonLabel }}" to find available models.
     </div>
   </div>
 </template>
