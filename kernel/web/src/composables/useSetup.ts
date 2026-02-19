@@ -70,9 +70,9 @@ Your goal is to be genuinely useful to them.`,
   capabilities_local: [],
 }
 
-export type SetupStep = 'vps' | 'server-setup' | 'kernel-url' | 'providers' | 'genesis' | 'review'
+export type SetupStep = 'vps' | 'server-setup' | 'kernel-url' | 'providers' | 'routing' | 'genesis' | 'review'
 
-const ALL_STEPS: SetupStep[] = ['vps', 'server-setup', 'kernel-url', 'providers', 'genesis', 'review']
+const ALL_STEPS: SetupStep[] = ['vps', 'server-setup', 'kernel-url', 'providers', 'routing', 'genesis', 'review']
 
 export function useSetup() {
   const currentStep = ref<SetupStep>('vps')
@@ -111,6 +111,9 @@ export function useSetup() {
 
   // Providers step
   const providers = ref<ProviderSetup[]>(JSON.parse(JSON.stringify(DEFAULT_PROVIDERS)))
+
+  // Routing step — intent → ordered model@provider refs
+  const routing = ref<Record<string, string[]>>({})
 
   // Genesis step
   const genesis = ref<GenesisSetup>(JSON.parse(JSON.stringify(DEFAULT_GENESIS)))
@@ -242,6 +245,15 @@ export function useSetup() {
       // Save genesis
       await api.setupGenesis(genesis.value)
 
+      // Save routing preferences
+      const nonEmptyRouting: Record<string, string[]> = {}
+      for (const [intent, refs] of Object.entries(routing.value)) {
+        if (refs.length > 0) nonEmptyRouting[intent] = refs
+      }
+      if (Object.keys(nonEmptyRouting).length > 0) {
+        await api.setupRouting(nonEmptyRouting)
+      }
+
       // Birth!
       await api.setupBirth()
       return true
@@ -267,6 +279,7 @@ export function useSetup() {
     provisioned,
     kernelUrl,
     providers,
+    routing,
     genesis,
     currentStepIndex,
     nextStep,

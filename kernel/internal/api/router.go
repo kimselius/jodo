@@ -86,6 +86,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		setup.POST("/config", s.handleSetupConfig)
 		setup.POST("/provision", s.handleSetupProvision)
 		setup.POST("/discover", s.handleSetupDiscover)
+		setup.POST("/routing", s.handleSetupRouting)
 	}
 
 	// Settings endpoints — require setup complete

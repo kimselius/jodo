@@ -5,6 +5,7 @@ import StepVPS from '@/components/setup/StepVPS.vue'
 import StepServerSetup from '@/components/setup/StepServerSetup.vue'
 import StepKernelURL from '@/components/setup/StepKernelURL.vue'
 import StepProviders from '@/components/setup/StepProviders.vue'
+import StepRouting from '@/components/setup/StepRouting.vue'
 import StepGenesis from '@/components/setup/StepGenesis.vue'
 import StepReview from '@/components/setup/StepReview.vue'
 
@@ -16,6 +17,7 @@ const stepLabels: Record<string, string> = {
   'server-setup': 'Server',
   'kernel-url': 'Kernel URL',
   providers: 'Providers',
+  routing: 'Routing',
   genesis: 'Genesis',
   review: 'Review',
 }
@@ -111,6 +113,14 @@ const stepLabels: Record<string, string> = {
         <StepProviders
           v-else-if="setup.currentStep.value === 'providers'"
           :providers="setup.providers.value"
+          @next="setup.nextStep()"
+          @back="setup.prevStep()"
+        />
+
+        <StepRouting
+          v-else-if="setup.currentStep.value === 'routing'"
+          :providers="setup.providers.value"
+          :routing="setup.routing.value"
           @next="setup.nextStep()"
           @back="setup.prevStep()"
         />

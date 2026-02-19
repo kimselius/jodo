@@ -441,6 +441,28 @@ func (s *Server) handleSetupProvision(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": allOk, "steps": results})
 }
 
+// POST /api/setup/routing — save routing preferences during setup
+func (s *Server) handleSetupRouting(c *gin.Context) {
+	var req struct {
+		IntentPreferences map[string][]string `json:"intent_preferences"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	if len(req.IntentPreferences) > 0 {
+		prefsJSON, _ := json.Marshal(req.IntentPreferences)
+		if err := s.ConfigStore.SetConfig("routing.intent_preferences", string(prefsJSON)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save routing"})
+			return
+		}
+	}
+
+	log.Printf("[setup] routing preferences saved (%d intents)", len(req.IntentPreferences))
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // buildRoutingFromModels queries saved models and builds intent_preferences
 // based on each model's capabilities, sorted by quality (highest first).
 func (s *Server) buildRoutingFromModels() map[string][]string {

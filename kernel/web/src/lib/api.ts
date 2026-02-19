@@ -151,6 +151,13 @@ export const api = {
     })
   },
 
+  setupRouting(intentPreferences: Record<string, string[]>) {
+    return request<{ ok: boolean }>('/api/setup/routing', {
+      method: 'POST',
+      body: JSON.stringify({ intent_preferences: intentPreferences }),
+    })
+  },
+
   setupDiscoverModels(provider: string, baseUrl?: string, apiKey?: string) {
     return request<{ models: unknown[]; error?: string }>('/api/setup/discover', {
       method: 'POST',
