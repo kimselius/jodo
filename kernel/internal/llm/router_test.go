@@ -266,6 +266,94 @@ func TestRouteEmbedPicksEmbedCapableProvider(t *testing.T) {
 	}
 }
 
+func TestRouteRespectsPreferenceOrder(t *testing.T) {
+	// Two Ollama models for "code" intent: model-a is #1, model-b is #2.
+	// Without VRAM constraints, model-a MUST be selected.
+	providers := map[string]Provider{
+		"ollama": &stubProvider{name: "ollama"},
+	}
+	configs := map[string]config.ProviderConfig{
+		"ollama": {
+			Models: map[string]config.ModelConfig{
+				"model-a": {
+					Capabilities: []string{"code", "plan", "chat"},
+					Quality:      80,
+				},
+				"model-b": {
+					Capabilities: []string{"code", "plan", "chat"},
+					Quality:      90, // higher quality but lower preference
+				},
+			},
+		},
+	}
+	routing := config.RoutingConfig{
+		IntentPreferences: map[string][]string{
+			"code": {"model-a@ollama", "model-b@ollama"},
+		},
+	}
+
+	budget := newUnlimitedBudget()
+	busy := NewBusyTracker(map[string]string{"ollama": "ollama"})
+	// No VRAM tracker — both models are viable
+	router := NewRouter(providers, configs, routing, budget, busy, nil)
+
+	result, err := router.Route("code", false)
+	if err != nil {
+		t.Fatalf("Route(code) failed: %v", err)
+	}
+	if result.ModelKey != "model-a" {
+		t.Errorf("expected model-a (preference #1), got %s", result.ModelKey)
+	}
+}
+
+func TestRoutePreferenceOrderWithVRAM(t *testing.T) {
+	// Two Ollama models: model-a is #1, model-b is #2.
+	// Neither is loaded in VRAM. model-a should still be selected in pass2.
+	providers := map[string]Provider{
+		"ollama": &stubProvider{name: "ollama"},
+	}
+	configs := map[string]config.ProviderConfig{
+		"ollama": {
+			TotalVRAMBytes: 48 * 1024 * 1024 * 1024, // 48 GB
+			Models: map[string]config.ModelConfig{
+				"model-a": {
+					Capabilities:  []string{"code", "plan", "chat"},
+					Quality:       80,
+					VRAMEstimateBytes: 12 * 1024 * 1024 * 1024, // 12 GB
+					PreferLoaded:  true,
+				},
+				"model-b": {
+					Capabilities:  []string{"code", "plan", "chat"},
+					Quality:       90,
+					VRAMEstimateBytes: 8 * 1024 * 1024 * 1024, // 8 GB
+					PreferLoaded:  true,
+				},
+			},
+		},
+	}
+	routing := config.RoutingConfig{
+		IntentPreferences: map[string][]string{
+			"code": {"model-a@ollama", "model-b@ollama"},
+		},
+	}
+
+	budget := newUnlimitedBudget()
+	busy := NewBusyTracker(map[string]string{"ollama": "ollama"})
+	// VRAM tracker with nothing loaded — use a stub that reports empty
+	vram := &VRAMTracker{totalVRAM: 48 * 1024 * 1024 * 1024}
+	router := NewRouter(providers, configs, routing, budget, busy, vram)
+
+	result, err := router.Route("code", false)
+	if err != nil {
+		t.Fatalf("Route(code) failed: %v", err)
+	}
+	// Pass 1 should find nothing (nothing loaded).
+	// Pass 2 should pick model-a (preference #1, fits in VRAM).
+	if result.ModelKey != "model-a" {
+		t.Errorf("expected model-a (preference #1), got %s — preference order not respected", result.ModelKey)
+	}
+}
+
 func TestRouteFallsThrough(t *testing.T) {
 	// First provider has no model for intent, should fall through to second
 	providers := map[string]Provider{

@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -161,6 +162,11 @@ func (s *Server) handleSettingsRoutingPut(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
+	}
+
+	// Log the exact order received from the frontend
+	for intent, prefs := range req.IntentPreferences {
+		log.Printf("[settings] routing save: intent=%s order=%v", intent, prefs)
 	}
 
 	if err := s.saveRoutingPreferences(req.IntentPreferences); err != nil {
@@ -364,7 +370,13 @@ func (s *Server) reloadProxy() {
 
 	cfg, err := s.ConfigStore.LoadFullConfig(s.Config.Database)
 	if err != nil {
+		log.Printf("[settings] reloadProxy: failed to load config: %v", err)
 		return
+	}
+
+	// Log the routing order that was loaded from DB
+	for intent, prefs := range cfg.Routing.IntentPreferences {
+		log.Printf("[settings] reloadProxy: intent=%s loaded_order=%v", intent, prefs)
 	}
 
 	s.LLM.Reconfigure(cfg.Providers, cfg.Routing)

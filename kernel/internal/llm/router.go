@@ -2,6 +2,8 @@ package llm
 
 import (
 	"fmt"
+	"log"
+	"strings"
 
 	"jodo-kernel/internal/config"
 )
@@ -51,38 +53,51 @@ func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
 		}
 	}
 
+	log.Printf("[router] routing intent=%q tools=%v preferences=[%s]", intent, needsTools, strings.Join(preferences, ", "))
+
 	// Pass 1: prefer already-loaded Ollama models (avoids loading latency)
 	if r.vram != nil {
 		if result := r.tryRoute(preferences, intent, needsTools, true); result != nil {
+			log.Printf("[router] pass1 selected: %s/%s (already loaded in VRAM)", result.ProviderName, result.Model)
 			return result, nil
 		}
+		log.Printf("[router] pass1: no loaded model found, falling through to pass2")
 	}
 
-	// Pass 2: normal routing — all candidates
+	// Pass 2: normal routing — all candidates in preference order
 	if result := r.tryRoute(preferences, intent, needsTools, false); result != nil {
+		log.Printf("[router] pass2 selected: %s/%s", result.ProviderName, result.Model)
 		return result, nil
 	}
 
+	log.Printf("[router] no viable model found for intent=%q", intent)
 	return nil, fmt.Errorf("no affordable provider available for intent %q", intent)
 }
 
 // tryRoute iterates preferences and returns the first viable route.
 // If onlyLoaded is true, only considers Ollama models marked PreferLoaded that are in VRAM.
 func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, onlyLoaded bool) *RouteResult {
-	for _, ref := range preferences {
+	pass := "pass2"
+	if onlyLoaded {
+		pass = "pass1"
+	}
+
+	for i, ref := range preferences {
 		modelKey, provName, isModelRef := config.ParseModelRef(ref)
 
 		provider, ok := r.providers[provName]
 		if !ok {
+			log.Printf("[router] %s [%d] %s: skip — provider %q not registered", pass, i, ref, provName)
 			continue
 		}
 
 		if onlyLoaded && provName != "ollama" {
-			continue
+			continue // silently skip non-ollama in pass1
 		}
 
 		provCfg, ok := r.configs[provName]
 		if !ok {
+			log.Printf("[router] %s [%d] %s: skip — no config for provider %q", pass, i, ref, provName)
 			continue
 		}
 
@@ -93,37 +108,52 @@ func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, 
 		if isModelRef {
 			mc, found = provCfg.Models[modelKey]
 			if !found {
+				log.Printf("[router] %s [%d] %s: skip — model key %q not found in provider %q (available: %s)",
+					pass, i, ref, modelKey, provName, modelKeys(provCfg.Models))
 				continue
 			}
 			mk = modelKey
 			if !hasCapability(mc.Capabilities, intent) {
+				log.Printf("[router] %s [%d] %s: skip — missing capability %q (has: %v)", pass, i, ref, intent, mc.Capabilities)
 				continue
 			}
 			if needsTools && !hasCapability(mc.Capabilities, "tools") {
+				log.Printf("[router] %s [%d] %s: skip — needs tools but model lacks tools capability", pass, i, ref)
 				continue
 			}
 		} else {
 			mk, mc, found = r.bestModelForIntent(provCfg, intent, needsTools)
 			if !found {
+				log.Printf("[router] %s [%d] %s: skip — no model with capability %q in provider", pass, i, ref, intent)
 				continue
 			}
 		}
 
 		if r.busy != nil && r.busy.IsBusy(provName, mk) {
+			log.Printf("[router] %s [%d] %s: skip — model is busy", pass, i, ref)
 			continue
 		}
 
 		if r.vram != nil && provName == "ollama" {
+			modelName := mc.ModelName(mk)
 			if onlyLoaded {
-				if !mc.PreferLoaded || !r.vram.IsLoaded(mc.ModelName(mk)) {
+				if !mc.PreferLoaded {
+					log.Printf("[router] %s [%d] %s: skip — prefer_loaded=false", pass, i, ref)
 					continue
 				}
-			} else if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+				if !r.vram.IsLoaded(modelName) {
+					log.Printf("[router] %s [%d] %s: skip — not loaded in VRAM (model_name=%q)", pass, i, ref, modelName)
+					continue
+				}
+			} else if !r.vram.CanFit(modelName, mc.VRAMEstimateBytes) {
+				log.Printf("[router] %s [%d] %s: skip — won't fit in VRAM (need=%s, model_name=%q)",
+					pass, i, ref, formatBytes(mc.VRAMEstimateBytes), modelName)
 				continue
 			}
 		}
 
 		if !r.budget.HasBudget(provName, intent) {
+			log.Printf("[router] %s [%d] %s: skip — budget exhausted for %s/%s", pass, i, ref, provName, intent)
 			continue
 		}
 
@@ -137,6 +167,15 @@ func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, 
 	}
 
 	return nil
+}
+
+// modelKeys returns a comma-separated list of model keys for logging.
+func modelKeys(models map[string]config.ModelConfig) string {
+	keys := make([]string, 0, len(models))
+	for k := range models {
+		keys = append(keys, k)
+	}
+	return strings.Join(keys, ", ")
 }
 
 // RouteEmbed picks a provider that supports embeddings.

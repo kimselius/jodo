@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +51,7 @@ func (vt *VRAMTracker) CanFit(modelName string, vramEstimate int64) bool {
 		return true // VRAM tracking disabled
 	}
 	if vramEstimate == 0 {
+		log.Printf("[vram] CanFit(%q): no estimate, allowing", modelName)
 		return true // no estimate available, allow it
 	}
 
@@ -59,21 +61,36 @@ func (vt *VRAMTracker) CanFit(modelName string, vramEstimate int64) bool {
 	// Already loaded — always fits
 	for _, m := range vt.loaded {
 		if m.Name == modelName {
+			log.Printf("[vram] CanFit(%q): already loaded (%s), fits", modelName, formatBytes(m.SizeVRAM))
 			return true
 		}
 	}
 
 	// Check if there's enough free VRAM
 	free := vt.totalVRAM - vt.usedVRAM
-	return free >= vramEstimate
+	fits := free >= vramEstimate
+	if !fits {
+		log.Printf("[vram] CanFit(%q): need %s but only %s free (%s used / %s total) — does not fit",
+			modelName, formatBytes(vramEstimate), formatBytes(free), formatBytes(vt.usedVRAM), formatBytes(vt.totalVRAM))
+	} else {
+		log.Printf("[vram] CanFit(%q): need %s, %s free — fits", modelName, formatBytes(vramEstimate), formatBytes(free))
+	}
+	return fits
 }
 
 // IsLoaded returns true if the model is currently loaded in VRAM.
+// Also checks ExpiresAt — if the model's keep-alive has expired, it may be
+// about to be evicted so we don't count it as reliably loaded.
 func (vt *VRAMTracker) IsLoaded(modelName string) bool {
 	vt.mu.RLock()
 	defer vt.mu.RUnlock()
 	for _, m := range vt.loaded {
 		if m.Name == modelName {
+			if !m.ExpiresAt.IsZero() && time.Now().After(m.ExpiresAt) {
+				log.Printf("[vram] model %q in loaded list but expired at %s — treating as not loaded",
+					modelName, m.ExpiresAt.Format(time.RFC3339))
+				return false
+			}
 			return true
 		}
 	}
@@ -199,8 +216,12 @@ func (vt *VRAMTracker) poll() {
 	vt.mu.Unlock()
 
 	if len(loaded) > 0 {
-		log.Printf("[vram] polled: %d models loaded, %s / %s used",
-			len(loaded), formatBytes(usedVRAM), formatBytes(vt.totalVRAM))
+		names := make([]string, len(loaded))
+		for i, m := range loaded {
+			names[i] = fmt.Sprintf("%s(%s, expires=%s)", m.Name, formatBytes(m.SizeVRAM), m.ExpiresAt.Format(time.RFC3339))
+		}
+		log.Printf("[vram] polled: %d models loaded [%s], %s / %s used",
+			len(loaded), strings.Join(names, ", "), formatBytes(usedVRAM), formatBytes(vt.totalVRAM))
 	}
 }
 
