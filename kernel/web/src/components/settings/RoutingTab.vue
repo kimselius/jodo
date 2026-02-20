@@ -15,7 +15,6 @@ const props = defineProps<{
 const emit = defineEmits<{ saved: [] }>()
 
 const form = ref<RoutingConfig>({
-  strategy: 'best_affordable',
   intent_preferences: {},
 })
 const saving = ref(false)
@@ -119,20 +118,6 @@ async function save() {
 <template>
   <div class="space-y-4">
     <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
-
-    <Card class="p-4 space-y-3">
-      <div>
-        <label class="text-sm font-medium mb-1.5 block">Routing Strategy</label>
-        <select
-          v-model="form.strategy"
-          class="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="best_affordable">Cascade (first affordable)</option>
-          <option value="round_robin">Round Robin</option>
-        </select>
-        <p class="text-xs text-muted-foreground mt-1">How the kernel picks which model to use. Cascade tries each in order until one fits the budget.</p>
-      </div>
-    </Card>
 
     <Card v-for="intent in intents" :key="intent" class="p-4 space-y-3">
       <div class="flex items-center justify-between">

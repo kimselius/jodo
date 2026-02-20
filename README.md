@@ -222,51 +222,23 @@ Every LLM request/response and every log message from Jodo is captured in `/var/
 
 ```
 jodo/
-├── jodo.sh                        # CLI for setup, start, stop, destroy
-├── kernel/                        # The BIOS (Go + Vue)
-│   ├── cmd/kernel/main.go         # Entry point
-│   ├── internal/
-│   │   ├── api/                   # HTTP endpoints + setup wizard
-│   │   │   ├── router.go          # Route registration + CORS
-│   │   │   ├── settings.go        # Provider config, model discovery
-│   │   │   ├── library.go         # Library CRUD + comments
-│   │   │   ├── inbox.go           # Inbox message log
-│   │   │   └── budget.go          # Budget status + per-model breakdown
-│   │   ├── audit/                 # JSONL audit logger
-│   │   ├── config/                # DB-backed config store + encryption
-│   │   ├── crypto/                # AES encryption for secrets
-│   │   ├── db/                    # PostgreSQL + pgvector migrations
-│   │   ├── git/                   # Remote git ops via SSH
-│   │   ├── growth/                # Growth/milestone log
-│   │   ├── llm/                   # LLM proxy, routing, budget
-│   │   │   ├── proxy.go           # Main gateway (route → transform → call)
-│   │   │   ├── router.go          # model@provider routing with fallback
-│   │   │   ├── budget.go          # Cost tracking per provider
-│   │   │   ├── busy.go            # Concurrency tracking for local models
-│   │   │   └── transform_*.go     # Claude / OpenAI / Ollama adapters
-│   │   ├── memory/                # Vector memory (store + semantic search)
-│   │   └── process/               # Process lifecycle, health, recovery
-│   ├── seed/
-│   │   ├── seed.py                # The seed — Jodo's consciousness loop
-│   │   └── prompts/               # birth, wakeup, plan prompt templates
-│   ├── web/                       # Frontend (Vue 3 + TypeScript + Tailwind)
-│   │   └── src/
-│   │       ├── views/             # Chat, Status, Library, Growth, Logs,
-│   │       │                      # Inbox, Memories, Timeline, Settings
-│   │       ├── components/        # UI components organized by feature
-│   │       │   ├── layout/        # Sidebar, navigation
-│   │       │   ├── status/        # BudgetCard, StatusCards
-│   │       │   ├── library/       # LibraryCard, LibraryForm, CommentThread
-│   │       │   ├── settings/      # ProvidersTab, RoutingTab, ModelDiscovery
-│   │       │   └── ui/            # Button, Card, Input, Badge, etc.
-│   │       ├── composables/       # Vue composition functions
-│   │       └── lib/               # API client, SSE, utilities
-│   ├── docker/
-│   │   └── jodo/                  # Jodo container (Python + SSH)
-│   │       ├── Dockerfile
-│   │       └── entrypoint.sh
-│   ├── Dockerfile                 # Kernel container (Go + Alpine)
-│   └── docker-compose.yaml
+├── jodo.sh                    # CLI: setup, start, stop, destroy
+├── kernel/                    # The BIOS (Go + Vue)
+│   ├── cmd/                   # Application entry point
+│   ├── internal/              # Go packages, one concern each:
+│   │   ├── api/               #   HTTP handlers, setup wizard, settings
+│   │   ├── llm/               #   LLM proxy, router, provider adapters, budget
+│   │   ├── config/            #   DB-backed config store
+│   │   ├── db/                #   PostgreSQL + pgvector migrations
+│   │   ├── memory/            #   Vector memory (store + search)
+│   │   ├── process/           #   Seed deployment, health, recovery
+│   │   ├── git/               #   Remote git ops via SSH
+│   │   ├── growth/            #   Galla log, milestones
+│   │   ├── audit/             #   JSONL audit logger
+│   │   └── crypto/            #   AES encryption for secrets
+│   ├── seed/                  # seed.py + prompt templates
+│   ├── web/                   # Vue 3 + TypeScript + Tailwind SPA
+│   └── docker/                # Dockerfiles + compose
 ```
 
 ## Upgrading

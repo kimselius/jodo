@@ -32,6 +32,8 @@ Thumbs.db
 .new/
 .old/
 .claude/
+.ssh/
+CLAUDE.md
 
 # Frontend build
 kernel/web/node_modules/

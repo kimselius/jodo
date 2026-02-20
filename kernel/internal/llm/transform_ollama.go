@@ -29,59 +29,11 @@ func NewOllamaProvider(cfg config.ProviderConfig) *OllamaProvider {
 	}
 }
 
-func (o *OllamaProvider) Name() string         { return "ollama" }
-func (o *OllamaProvider) SupportsTools() bool   { return true }
-func (o *OllamaProvider) SupportsEmbed() bool   { return true }
+func (o *OllamaProvider) Name() string       { return "ollama" }
+func (o *OllamaProvider) SupportsEmbed() bool { return true }
 
 func (o *OllamaProvider) BuildRequest(req *JodoRequest, model string) (*ProviderHTTPRequest, error) {
-	// Ollama follows OpenAI-compatible format for messages and tools
-	var msgs []interface{}
-
-	if req.System != "" {
-		msgs = append(msgs, map[string]interface{}{
-			"role":    "system",
-			"content": req.System,
-		})
-	}
-
-	for _, m := range req.Messages {
-		switch m.Role {
-		case "user":
-			msgs = append(msgs, map[string]interface{}{
-				"role":    "user",
-				"content": m.Content,
-			})
-
-		case "assistant":
-			am := map[string]interface{}{
-				"role":    "assistant",
-				"content": m.Content,
-			}
-			if len(m.ToolCalls) > 0 {
-				tcs := make([]map[string]interface{}, len(m.ToolCalls))
-				for j, tc := range m.ToolCalls {
-					tcs[j] = map[string]interface{}{
-						"function": map[string]interface{}{
-							"name":      tc.Name,
-							"arguments": tc.Arguments, // Ollama accepts objects directly
-						},
-					}
-				}
-				am["tool_calls"] = tcs
-			}
-			msgs = append(msgs, am)
-
-		case "tool_result":
-			content := m.Content
-			if m.IsError {
-				content = "Error: " + content
-			}
-			msgs = append(msgs, map[string]interface{}{
-				"role":    "tool",
-				"content": content,
-			})
-		}
-	}
+	msgs := buildOpenAICompatMessages(req, openaiCompatOpts{ArgsAsJSON: false, IncludeToolCallID: false})
 
 	body := map[string]interface{}{
 		"model":    model,
@@ -89,25 +41,8 @@ func (o *OllamaProvider) BuildRequest(req *JodoRequest, model string) (*Provider
 		"stream":   false,
 	}
 
-	// Transform tools (same format as OpenAI)
-	if len(req.Tools) > 0 {
-		switch req.ToolChoice {
-		case "none":
-			// Don't send tools
-		default:
-			tools := make([]map[string]interface{}, len(req.Tools))
-			for i, t := range req.Tools {
-				tools[i] = map[string]interface{}{
-					"type": "function",
-					"function": map[string]interface{}{
-						"name":        t.Name,
-						"description": t.Description,
-						"parameters":  t.Parameters,
-					},
-				}
-			}
-			body["tools"] = tools
-		}
+	if tools := buildOpenAICompatTools(req); tools != nil {
+		body["tools"] = tools
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -149,21 +84,10 @@ func (o *OllamaProvider) ParseResponse(statusCode int, body []byte) (*ProviderHT
 
 	var toolCalls []ToolCall
 	for i, tc := range result.Message.ToolCalls {
-		var args map[string]interface{}
-		if len(tc.Function.Arguments) > 0 {
-			// Ollama may return arguments as object or string — handle both
-			if tc.Function.Arguments[0] == '"' {
-				var jsonStr string
-				json.Unmarshal(tc.Function.Arguments, &jsonStr)
-				json.Unmarshal([]byte(jsonStr), &args)
-			} else {
-				json.Unmarshal(tc.Function.Arguments, &args)
-			}
-		}
 		toolCalls = append(toolCalls, ToolCall{
-			ID:        fmt.Sprintf("ollama_tc_%d", i),
+			ID:        generateToolCallID("", "ollama_tc", i),
 			Name:      tc.Function.Name,
-			Arguments: args,
+			Arguments: parseToolCallArgs(tc.Function.Arguments),
 		})
 	}
 

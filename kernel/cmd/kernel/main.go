@@ -80,37 +80,44 @@ func main() {
 	}
 }
 
-// startOperational boots the kernel with all subsystems (normal mode).
-func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) {
+// subsystems holds all initialized kernel components.
+type subsystems struct {
+	cfg          *config.Config
+	genesis      *config.Genesis
+	proxy        *llm.Proxy
+	memStore     *memory.Store
+	memSearcher  *memory.Searcher
+	procManager  *process.Manager
+	gitManager   *git.Manager
+	growthLogger *growth.Logger
+	chatHub      *api.ChatHub
+	wsHub        *api.WSHub
+}
+
+// initSubsystems creates all kernel components from DB config.
+// Single source of truth — used by startOperational and birthJodo.
+func initSubsystems(database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore) (*subsystems, error) {
 	cfg, err := configStore.LoadFullConfig(dbCfg)
 	if err != nil {
-		log.Fatalf("[boot] load config from DB: %v", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 	log.Printf("[boot] config loaded from DB (port %d, %d providers)", cfg.Kernel.Port, len(cfg.Providers))
 
 	genesis, err := configStore.LoadGenesis()
 	if err != nil {
-		log.Fatalf("[boot] load genesis from DB: %v", err)
+		return nil, fmt.Errorf("load genesis: %w", err)
 	}
 	log.Printf("[boot] genesis loaded: %s v%d", genesis.Identity.Name, genesis.Identity.Version)
 
-	// Initialize subsystems
 	proxy := llm.NewProxy(database, cfg.Providers, cfg.Routing)
-	log.Println("[boot] LLM proxy ready")
-
 	if cfg.Kernel.AuditLogPath != "" {
-		auditLogger, err := audit.NewLogger(cfg.Kernel.AuditLogPath)
-		if err != nil {
-			log.Printf("[boot] WARNING: audit log failed: %v (continuing without audit)", err)
-		} else {
+		if auditLogger, err := audit.NewLogger(cfg.Kernel.AuditLogPath); err == nil {
 			proxy.Audit = auditLogger
-			defer auditLogger.Close()
 			log.Printf("[boot] audit logging to %s", cfg.Kernel.AuditLogPath)
+		} else {
+			log.Printf("[boot] WARNING: audit log failed: %v (continuing without audit)", err)
 		}
 	}
-
-	memStore := memory.NewStore(database, proxy)
-	memSearcher := memory.NewSearcher(database, proxy)
 
 	kernelURL := cfg.Kernel.ExternalURL
 	if kernelURL == "" {
@@ -118,10 +125,9 @@ func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore
 		log.Printf("[boot] WARNING: kernel.external_url not set — using %s", kernelURL)
 	}
 
-	// Write SSH key to temp file for process manager
 	sshKeyPath, err := writeSSHKeyToTemp(configStore)
 	if err != nil {
-		log.Printf("[boot] WARNING: SSH key not available: %v (Jodo boot will fail)", err)
+		log.Printf("[boot] WARNING: SSH key not available: %v", err)
 	}
 	cfg.Jodo.SSHKeyPath = sshKeyPath
 
@@ -129,36 +135,56 @@ func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore
 	gitManager := git.NewManager(cfg.Jodo, procManager.RunSSH)
 	growthLogger := growth.NewLogger(database)
 
-	// Set up API server
 	chatHub := api.NewChatHub()
 	wsHub := api.NewWSHub()
-
 	growthLogger.OnEvent = func(event, note, gitHash string) {
 		wsHub.Broadcast("growth", map[string]string{
-			"event":    event,
-			"note":     note,
-			"git_hash": gitHash,
+			"event": event, "note": note, "git_hash": gitHash,
 		})
 	}
 
-	server := &api.Server{
-		Config:        cfg,
-		Genesis:       genesis,
-		LLM:           proxy,
-		Memory:        memStore,
-		Searcher:      memSearcher,
-		Process:       procManager,
-		Git:           gitManager,
-		Growth:        growthLogger,
-		Audit:         proxy.Audit,
-		DB:            database,
-		ChatHub:       chatHub,
-		WS:            wsHub,
-		ConfigStore:   configStore,
-		Encryptor:     encryptor,
-		SetupComplete: true,
-		JodoMode:      envOr("JODO_MODE", "vps"),
+	return &subsystems{
+		cfg: cfg, genesis: genesis, proxy: proxy,
+		memStore: memory.NewStore(database, proxy), memSearcher: memory.NewSearcher(database, proxy),
+		procManager: procManager, gitManager: gitManager, growthLogger: growthLogger,
+		chatHub: chatHub, wsHub: wsHub,
+	}, nil
+}
+
+// wireServer populates a Server struct from initialized subsystems.
+func wireServer(server *api.Server, s *subsystems, database *sql.DB, configStore *config.DBStore, encryptor *crypto.Encryptor) {
+	server.Config = s.cfg
+	server.Genesis = s.genesis
+	server.LLM = s.proxy
+	server.Memory = s.memStore
+	server.Searcher = s.memSearcher
+	server.Process = s.procManager
+	server.Git = s.gitManager
+	server.Growth = s.growthLogger
+	server.Audit = s.proxy.Audit
+	server.DB = database
+	server.ChatHub = s.chatHub
+	server.WS = s.wsHub
+	server.ConfigStore = configStore
+	server.Encryptor = encryptor
+	server.SetupComplete = true
+	server.JodoMode = envOr("JODO_MODE", "vps")
+}
+
+// startOperational boots the kernel with all subsystems (normal mode).
+func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) {
+	s, err := initSubsystems(database, dbCfg, configStore)
+	if err != nil {
+		log.Fatalf("[boot] %v", err)
 	}
+
+	// Ensure audit log is closed on shutdown
+	if s.proxy.Audit != nil {
+		defer s.proxy.Audit.Close()
+	}
+
+	server := &api.Server{}
+	wireServer(server, s, database, configStore, encryptor)
 
 	router := server.SetupRouter()
 
@@ -167,21 +193,21 @@ func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore
 	serveSPA(router, webDir)
 
 	// Boot Jodo + health checker
-	healthChecker := process.NewHealthChecker(cfg.Jodo, cfg.Kernel, procManager, database)
-	recovery := process.NewRecovery(procManager, gitManager, growthLogger, seedPath(), cfg.Kernel.MaxRestartAttempts)
+	healthChecker := process.NewHealthChecker(s.cfg.Jodo, s.cfg.Kernel, s.procManager, database)
+	recovery := process.NewRecovery(s.procManager, s.gitManager, s.growthLogger, seedPath(), s.cfg.Kernel.MaxRestartAttempts)
 	healthChecker.SetEscalationHandler(recovery.HandleFailure)
 
 	go func() {
-		bootJodo(cfg, procManager, gitManager, growthLogger)
+		bootJodo(s.cfg, s.procManager, s.gitManager, s.growthLogger)
 		log.Println("[boot] waiting 30s for seed.py to initialize...")
 		time.Sleep(30 * time.Second)
 		healthChecker.Start()
 	}()
 
-	go maintenanceLoop(cfg, database, gitManager, procManager, growthLogger)
+	go maintenanceLoop(s.cfg, database, s.gitManager, s.procManager, s.growthLogger)
 
 	// Start server
-	addr := fmt.Sprintf(":%d", cfg.Kernel.Port)
+	addr := fmt.Sprintf(":%d", s.cfg.Kernel.Port)
 	srv := &http.Server{Addr: addr, Handler: router}
 
 	go func() {
@@ -191,7 +217,7 @@ func startOperational(database *sql.DB, dbCfg config.DatabaseConfig, configStore
 		}
 	}()
 
-	growthLogger.Log("boot", "Kernel started", "", nil)
+	s.growthLogger.Log("boot", "Kernel started", "", nil)
 	log.Println("[boot] Jodo Kernel is alive.")
 
 	// Graceful shutdown
@@ -258,78 +284,27 @@ func startSetupMode(database *sql.DB, dbCfg config.DatabaseConfig, configStore *
 func birthJodo(server *api.Server, database *sql.DB, dbCfg config.DatabaseConfig, configStore *config.DBStore, encryptor *crypto.Encryptor) error {
 	log.Println("[birth] initializing subsystems...")
 
-	cfg, err := configStore.LoadFullConfig(dbCfg)
+	s, err := initSubsystems(database, dbCfg, configStore)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
 	}
 
-	genesis, err := configStore.LoadGenesis()
-	if err != nil {
-		return fmt.Errorf("load genesis: %w", err)
-	}
+	wireServer(server, s, database, configStore, encryptor)
 
-	proxy := llm.NewProxy(database, cfg.Providers, cfg.Routing)
-	if cfg.Kernel.AuditLogPath != "" {
-		if auditLogger, err := audit.NewLogger(cfg.Kernel.AuditLogPath); err == nil {
-			proxy.Audit = auditLogger
-		}
-	}
-
-	memStore := memory.NewStore(database, proxy)
-	memSearcher := memory.NewSearcher(database, proxy)
-
-	kernelURL := cfg.Kernel.ExternalURL
-	if kernelURL == "" {
-		kernelURL = fmt.Sprintf("http://localhost:%d", cfg.Kernel.Port)
-	}
-
-	sshKeyPath, err := writeSSHKeyToTemp(configStore)
-	if err != nil {
-		return fmt.Errorf("SSH key: %w", err)
-	}
-	cfg.Jodo.SSHKeyPath = sshKeyPath
-
-	procManager := process.NewManager(cfg.Jodo, kernelURL)
-	gitManager := git.NewManager(cfg.Jodo, procManager.RunSSH)
-	growthLogger := growth.NewLogger(database)
-
-	chatHub := api.NewChatHub()
-	wsHub := api.NewWSHub()
-	growthLogger.OnEvent = func(event, note, gitHash string) {
-		wsHub.Broadcast("growth", map[string]string{
-			"event": event, "note": note, "git_hash": gitHash,
-		})
-	}
-
-	// Wire everything into the server
-	server.Config = cfg
-	server.Genesis = genesis
-	server.LLM = proxy
-	server.Memory = memStore
-	server.Searcher = memSearcher
-	server.Process = procManager
-	server.Git = gitManager
-	server.Growth = growthLogger
-	server.Audit = proxy.Audit
-	server.ChatHub = chatHub
-	server.WS = wsHub
-	server.SetupComplete = true
-
-	// Boot Jodo
 	go func() {
-		bootJodo(cfg, procManager, gitManager, growthLogger)
-		healthChecker := process.NewHealthChecker(cfg.Jodo, cfg.Kernel, procManager, database)
-		recovery := process.NewRecovery(procManager, gitManager, growthLogger, seedPath(), cfg.Kernel.MaxRestartAttempts)
+		bootJodo(s.cfg, s.procManager, s.gitManager, s.growthLogger)
+		healthChecker := process.NewHealthChecker(s.cfg.Jodo, s.cfg.Kernel, s.procManager, database)
+		recovery := process.NewRecovery(s.procManager, s.gitManager, s.growthLogger, seedPath(), s.cfg.Kernel.MaxRestartAttempts)
 		healthChecker.SetEscalationHandler(recovery.HandleFailure)
 
 		log.Println("[birth] waiting 30s for seed.py to initialize...")
 		time.Sleep(30 * time.Second)
 		healthChecker.Start()
 
-		go maintenanceLoop(cfg, database, gitManager, procManager, growthLogger)
+		go maintenanceLoop(s.cfg, database, s.gitManager, s.procManager, s.growthLogger)
 	}()
 
-	growthLogger.Log("birth", "Jodo was born!", "", nil)
+	s.growthLogger.Log("birth", "Jodo was born!", "", nil)
 	log.Println("[birth] Jodo is being born!")
 	return nil
 }

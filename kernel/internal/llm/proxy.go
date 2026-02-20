@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"jodo-kernel/internal/audit"
@@ -18,6 +19,7 @@ import (
 // Proxy is the main LLM gateway. Jodo calls this instead of calling providers directly.
 // It routes requests, translates formats, enforces budgets, and tracks chain costs.
 type Proxy struct {
+	mu      sync.RWMutex
 	Router  *Router
 	Budget  *BudgetTracker
 	Busy    *BusyTracker
@@ -29,10 +31,18 @@ type Proxy struct {
 	configs map[string]config.ProviderConfig
 }
 
-// NewProxy creates a fully wired LLM proxy from config.
-func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) *Proxy {
-	providers := make(map[string]Provider)
+// proxySubsystems holds the wired-up subsystems built from config.
+type proxySubsystems struct {
+	router *Router
+	budget *BudgetTracker
+	busy   *BusyTracker
+	vram   *VRAMTracker
+}
 
+// buildSubsystems creates providers, trackers, and router from config.
+// Single source of truth for wiring — used by NewProxy and Reconfigure.
+func buildSubsystems(db *sql.DB, providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) proxySubsystems {
+	providers := make(map[string]Provider)
 	for name, cfg := range providerConfigs {
 		switch name {
 		case "claude":
@@ -52,14 +62,12 @@ func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, rout
 
 	budget := NewBudgetTracker(db, providerConfigs)
 
-	// Build provider type map for busy tracking
 	providerTypes := make(map[string]string)
 	for name := range providerConfigs {
-		providerTypes[name] = name // provider name is the type (ollama, claude, openai)
+		providerTypes[name] = name
 	}
 	busy := NewBusyTracker(providerTypes)
 
-	// Create VRAM tracker for Ollama if VRAM capacity is configured
 	var vram *VRAMTracker
 	if ollamaCfg, ok := providerConfigs["ollama"]; ok && ollamaCfg.TotalVRAMBytes > 0 {
 		vram = NewVRAMTracker(ollamaCfg.BaseURL, ollamaCfg.TotalVRAMBytes)
@@ -68,11 +76,17 @@ func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, rout
 
 	router := NewRouter(providers, providerConfigs, routing, budget, busy, vram)
 
+	return proxySubsystems{router: router, budget: budget, busy: busy, vram: vram}
+}
+
+// NewProxy creates a fully wired LLM proxy from config.
+func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) *Proxy {
+	s := buildSubsystems(db, providerConfigs, routing)
 	return &Proxy{
-		Router:  router,
-		Budget:  budget,
-		Busy:    busy,
-		VRAM:    vram,
+		Router:  s.router,
+		Budget:  s.budget,
+		Busy:    s.busy,
+		VRAM:    s.vram,
 		Chains:  NewChainTracker(),
 		DB:      db,
 		client:  &http.Client{Timeout: 120 * time.Second},
@@ -93,9 +107,6 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	if req.MaxTokens == 0 {
 		req.MaxTokens = 1000
 	}
-	if req.Temperature == 0 {
-		req.Temperature = 0.7
-	}
 	if req.Intent == "" {
 		req.Intent = "chat"
 	}
@@ -112,9 +123,17 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 		}
 	}
 
+	// Snapshot router under read lock — released before HTTP call
+	p.mu.RLock()
+	router := p.Router
+	budget := p.Budget
+	vram := p.VRAM
+	busy := p.Busy
+	p.mu.RUnlock()
+
 	// Route to best affordable provider
 	needsTools := len(req.Tools) > 0
-	route, err := p.Router.Route(req.Intent, req.MaxTokens, needsTools)
+	route, err := router.Route(req.Intent, needsTools)
 	if err != nil {
 		return nil, err
 	}
@@ -141,17 +160,16 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	}
 
 	// Acquire concurrency slot (prevents overloading local models)
-	if p.VRAM != nil && route.ProviderName == "ollama" {
-		// Use VRAM tracker for Ollama (per-model concurrency)
-		if !p.VRAM.Acquire(route.Model) {
+	if vram != nil && route.ProviderName == "ollama" {
+		if !vram.Acquire(route.Model) {
 			return nil, fmt.Errorf("model %s/%s is busy", route.ProviderName, route.Model)
 		}
-		defer p.VRAM.Release(route.Model)
-	} else if p.Busy != nil {
-		if !p.Busy.Acquire(route.ProviderName, route.ModelKey) {
+		defer vram.Release(route.Model)
+	} else if busy != nil {
+		if !busy.Acquire(route.ProviderName, route.ModelKey) {
 			return nil, fmt.Errorf("model %s/%s is busy", route.ProviderName, route.ModelKey)
 		}
-		defer p.Busy.Release(route.ProviderName, route.ModelKey)
+		defer busy.Release(route.ProviderName, route.ModelKey)
 	}
 
 	// Build provider-specific HTTP request
@@ -160,51 +178,10 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	// Execute HTTP call with retry for transient errors (429, 529, etc.)
-	var respBody []byte
-	var statusCode int
-	backoff := time.Second
-	const maxRetries = 3
-
-	for attempt := 0; ; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", provReq.URL, bytes.NewReader(provReq.Body))
-		if err != nil {
-			return nil, fmt.Errorf("create http request: %w", err)
-		}
-		for k, v := range provReq.Headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			if attempt < maxRetries && ctx.Err() == nil {
-				log.Printf("[llm] request to %s failed: %v, retrying in %v (%d/%d)", route.ProviderName, err, backoff, attempt+1, maxRetries)
-				select {
-				case <-time.After(backoff):
-					backoff *= 2
-					continue
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}
-			return nil, fmt.Errorf("http request to %s: %w", route.ProviderName, err)
-		}
-
-		respBody, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
-		statusCode = resp.StatusCode
-
-		if !isRetryableStatus(statusCode) || attempt >= maxRetries {
-			break
-		}
-
-		log.Printf("[llm] %s returned %d, retrying in %v (%d/%d)", route.ProviderName, statusCode, backoff, attempt+1, maxRetries)
-		select {
-		case <-time.After(backoff):
-			backoff *= 2
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	// Execute HTTP call with retry
+	respBody, statusCode, err := p.executeWithRetry(ctx, provReq, route.ProviderName)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse provider-specific response into Jodo Format
@@ -220,18 +197,7 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 				Error:    err.Error(),
 			})
 		}
-		// Log error to llm_calls table
-		if p.DB != nil {
-			reqMsgsJSON, _ := json.Marshal(req.Messages)
-			reqToolsJSON, _ := json.Marshal(req.Tools)
-			p.DB.Exec(
-				`INSERT INTO llm_calls (intent, provider, model, duration_ms, chain_id, request_system, request_messages, request_tools, error)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-				req.Intent, route.ProviderName, route.Model,
-				time.Since(start).Milliseconds(), sql.NullString{String: req.ChainID, Valid: req.ChainID != ""},
-				req.System, reqMsgsJSON, reqToolsJSON, err.Error(),
-			)
-		}
+		p.logCallToDB(req, route, start, nil, err)
 		return nil, err
 	}
 
@@ -239,7 +205,7 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	cost := CalculateCost(route.ModelConfig, provResp.TokensIn, provResp.TokensOut)
 
 	// Log usage
-	if logErr := p.Budget.LogUsage(route.ProviderName, route.Model, req.Intent, provResp.TokensIn, provResp.TokensOut, cost); logErr != nil {
+	if logErr := budget.LogUsage(route.ProviderName, route.Model, req.Intent, provResp.TokensIn, provResp.TokensOut, cost); logErr != nil {
 		log.Printf("[llm] failed to log usage: %v", logErr)
 	}
 
@@ -271,25 +237,10 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	}
 
 	// Log successful call to llm_calls table
-	if p.DB != nil {
-		reqMsgsJSON, _ := json.Marshal(req.Messages)
-		reqToolsJSON, _ := json.Marshal(req.Tools)
-		respToolCallsJSON, _ := json.Marshal(provResp.ToolCalls)
-		if _, dbErr := p.DB.Exec(
-			`INSERT INTO llm_calls (intent, provider, model, tokens_in, tokens_out, cost, duration_ms, chain_id, request_system, request_messages, request_tools, response_content, response_tool_calls, response_done)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-			req.Intent, route.ProviderName, route.Model,
-			provResp.TokensIn, provResp.TokensOut, cost,
-			time.Since(start).Milliseconds(), sql.NullString{String: req.ChainID, Valid: req.ChainID != ""},
-			req.System, reqMsgsJSON, reqToolsJSON,
-			provResp.Content, respToolCallsJSON, provResp.Done,
-		); dbErr != nil {
-			log.Printf("[llm] failed to log call to DB: %v", dbErr)
-		}
-	}
+	p.logCallToDB(req, route, start, provResp, nil)
 
 	// Get budget remaining
-	budgetRemaining, _ := p.Budget.GetAllBudgetStatus()
+	budgetRemaining, _ := budget.GetAllBudgetStatus()
 
 	return &JodoResponse{
 		Content:         provResp.Content,
@@ -305,59 +256,117 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	}, nil
 }
 
+// executeWithRetry performs the HTTP call with exponential backoff for transient errors (429, 529, etc.).
+func (p *Proxy) executeWithRetry(ctx context.Context, provReq *ProviderHTTPRequest, providerName string) ([]byte, int, error) {
+	backoff := time.Second
+	const maxRetries = 3
+
+	for attempt := 0; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", provReq.URL, bytes.NewReader(provReq.Body))
+		if err != nil {
+			return nil, 0, fmt.Errorf("create http request: %w", err)
+		}
+		for k, v := range provReq.Headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err := p.client.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries && ctx.Err() == nil {
+				log.Printf("[llm] request to %s failed: %v, retrying in %v (%d/%d)", providerName, err, backoff, attempt+1, maxRetries)
+				select {
+				case <-time.After(backoff):
+					backoff *= 2
+					continue
+				case <-ctx.Done():
+					return nil, 0, ctx.Err()
+				}
+			}
+			return nil, 0, fmt.Errorf("http request to %s: %w", providerName, err)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if !isRetryableStatus(resp.StatusCode) || attempt >= maxRetries {
+			return body, resp.StatusCode, nil
+		}
+
+		log.Printf("[llm] %s returned %d, retrying in %v (%d/%d)", providerName, resp.StatusCode, backoff, attempt+1, maxRetries)
+		select {
+		case <-time.After(backoff):
+			backoff *= 2
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		}
+	}
+}
+
+// logCallToDB records a Think call (success or error) to the llm_calls table.
+func (p *Proxy) logCallToDB(req *JodoRequest, route *RouteResult, start time.Time, resp *ProviderHTTPResponse, callErr error) {
+	if p.DB == nil {
+		return
+	}
+
+	reqMsgsJSON, _ := json.Marshal(req.Messages)
+	reqToolsJSON, _ := json.Marshal(req.Tools)
+	chainID := sql.NullString{String: req.ChainID, Valid: req.ChainID != ""}
+	durationMs := time.Since(start).Milliseconds()
+
+	if callErr != nil {
+		p.DB.Exec(
+			`INSERT INTO llm_calls (intent, provider, model, duration_ms, chain_id, request_system, request_messages, request_tools, error)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			req.Intent, route.ProviderName, route.Model,
+			durationMs, chainID,
+			req.System, reqMsgsJSON, reqToolsJSON, callErr.Error(),
+		)
+		return
+	}
+
+	respToolCallsJSON, _ := json.Marshal(resp.ToolCalls)
+	if _, dbErr := p.DB.Exec(
+		`INSERT INTO llm_calls (intent, provider, model, tokens_in, tokens_out, cost, duration_ms, chain_id, request_system, request_messages, request_tools, response_content, response_tool_calls, response_done)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		req.Intent, route.ProviderName, route.Model,
+		resp.TokensIn, resp.TokensOut, CalculateCost(route.ModelConfig, resp.TokensIn, resp.TokensOut),
+		durationMs, chainID,
+		req.System, reqMsgsJSON, reqToolsJSON,
+		resp.Content, respToolCallsJSON, resp.Done,
+	); dbErr != nil {
+		log.Printf("[llm] failed to log call to DB: %v", dbErr)
+	}
+}
+
 // Reconfigure swaps the provider and routing config without restarting the kernel.
 // This is called when settings are changed via the UI.
 func (p *Proxy) Reconfigure(providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) {
-	// Stop old VRAM tracker if it exists
-	if p.VRAM != nil {
-		p.VRAM.Stop()
-	}
+	s := buildSubsystems(p.DB, providerConfigs, routing)
 
-	providers := make(map[string]Provider)
-	for name, cfg := range providerConfigs {
-		switch name {
-		case "claude":
-			if cfg.APIKey != "" {
-				providers[name] = NewClaudeProvider(cfg)
-			}
-		case "openai":
-			if cfg.APIKey != "" {
-				providers[name] = NewOpenAIProvider(cfg)
-			}
-		case "ollama":
-			providers[name] = NewOllamaProvider(cfg)
-		}
-	}
-
-	budget := NewBudgetTracker(p.Budget.db, providerConfigs)
-
-	providerTypes := make(map[string]string)
-	for name := range providerConfigs {
-		providerTypes[name] = name
-	}
-	busy := NewBusyTracker(providerTypes)
-
-	// Create new VRAM tracker if Ollama has VRAM configured
-	var vram *VRAMTracker
-	if ollamaCfg, ok := providerConfigs["ollama"]; ok && ollamaCfg.TotalVRAMBytes > 0 {
-		vram = NewVRAMTracker(ollamaCfg.BaseURL, ollamaCfg.TotalVRAMBytes)
-		log.Printf("[llm] VRAM tracker enabled: %s total", formatBytes(ollamaCfg.TotalVRAMBytes))
-	}
-
-	router := NewRouter(providers, providerConfigs, routing, budget, busy, vram)
-
-	p.Router = router
-	p.Budget = budget
-	p.Busy = busy
-	p.VRAM = vram
+	p.mu.Lock()
+	oldVRAM := p.VRAM
+	p.Router = s.router
+	p.Budget = s.budget
+	p.Busy = s.busy
+	p.VRAM = s.vram
 	p.configs = providerConfigs
+	p.mu.Unlock()
 
-	log.Printf("[llm] reconfigured with %d providers", len(providers))
+	if oldVRAM != nil {
+		oldVRAM.Stop()
+	}
+
+	log.Printf("[llm] reconfigured with %d providers", len(s.router.providers))
 }
 
 // Embed generates an embedding vector for the given text.
 func (p *Proxy) Embed(ctx context.Context, text string) (*EmbedResponse, error) {
-	route, err := p.Router.RouteEmbed()
+	p.mu.RLock()
+	router := p.Router
+	budget := p.Budget
+	p.mu.RUnlock()
+
+	route, err := router.RouteEmbed()
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +378,7 @@ func (p *Proxy) Embed(ctx context.Context, text string) (*EmbedResponse, error) 
 
 	cost := float64(tokensIn) * route.ModelConfig.InputCostPer1MTokens / 1_000_000
 
-	if logErr := p.Budget.LogUsage(route.ProviderName, route.Model, "embed", tokensIn, 0, cost); logErr != nil {
+	if logErr := budget.LogUsage(route.ProviderName, route.Model, "embed", tokensIn, 0, cost); logErr != nil {
 		log.Printf("[llm] failed to log embed usage: %v", logErr)
 	}
 

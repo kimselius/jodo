@@ -25,65 +25,11 @@ func NewOpenAIProvider(cfg config.ProviderConfig) *OpenAIProvider {
 	}
 }
 
-func (o *OpenAIProvider) Name() string         { return "openai" }
-func (o *OpenAIProvider) SupportsTools() bool   { return true }
-func (o *OpenAIProvider) SupportsEmbed() bool   { return true }
+func (o *OpenAIProvider) Name() string       { return "openai" }
+func (o *OpenAIProvider) SupportsEmbed() bool { return true }
 
 func (o *OpenAIProvider) BuildRequest(req *JodoRequest, model string) (*ProviderHTTPRequest, error) {
-	// Build messages: system goes as first message
-	var msgs []interface{}
-
-	if req.System != "" {
-		msgs = append(msgs, map[string]interface{}{
-			"role":    "system",
-			"content": req.System,
-		})
-	}
-
-	for _, m := range req.Messages {
-		switch m.Role {
-		case "user":
-			msgs = append(msgs, map[string]interface{}{
-				"role":    "user",
-				"content": m.Content,
-			})
-
-		case "assistant":
-			am := map[string]interface{}{
-				"role":    "assistant",
-				"content": m.Content,
-			}
-			if len(m.ToolCalls) > 0 {
-				// Transform tool calls: arguments must be a JSON string
-				tcs := make([]map[string]interface{}, len(m.ToolCalls))
-				for j, tc := range m.ToolCalls {
-					argsJSON, _ := json.Marshal(tc.Arguments)
-					tcs[j] = map[string]interface{}{
-						"id":   tc.ID,
-						"type": "function",
-						"function": map[string]interface{}{
-							"name":      tc.Name,
-							"arguments": string(argsJSON),
-						},
-					}
-				}
-				am["tool_calls"] = tcs
-			}
-			msgs = append(msgs, am)
-
-		case "tool_result":
-			// OpenAI uses role "tool" with tool_call_id
-			content := m.Content
-			if m.IsError {
-				content = "Error: " + content
-			}
-			msgs = append(msgs, map[string]interface{}{
-				"role":         "tool",
-				"tool_call_id": m.ToolCallID,
-				"content":      content,
-			})
-		}
-	}
+	msgs := buildOpenAICompatMessages(req, openaiCompatOpts{ArgsAsJSON: true, IncludeToolCallID: true})
 
 	body := map[string]interface{}{
 		"model":    model,
@@ -92,30 +38,11 @@ func (o *OpenAIProvider) BuildRequest(req *JodoRequest, model string) (*Provider
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
-	if req.Temperature > 0 {
-		body["temperature"] = req.Temperature
+
+	if tools := buildOpenAICompatTools(req); tools != nil {
+		body["tools"] = tools
 	}
-
-	// Transform tools
 	if len(req.Tools) > 0 {
-		switch req.ToolChoice {
-		case "none":
-			// Don't send tools
-		default:
-			tools := make([]map[string]interface{}, len(req.Tools))
-			for i, t := range req.Tools {
-				tools[i] = map[string]interface{}{
-					"type": "function",
-					"function": map[string]interface{}{
-						"name":        t.Name,
-						"description": t.Description,
-						"parameters":  t.Parameters,
-					},
-				}
-			}
-			body["tools"] = tools
-		}
-
 		switch req.ToolChoice {
 		case "auto", "":
 			body["tool_choice"] = "auto"
@@ -178,15 +105,10 @@ func (o *OpenAIProvider) ParseResponse(statusCode int, body []byte) (*ProviderHT
 	var toolCalls []ToolCall
 
 	for _, tc := range choice.Message.ToolCalls {
-		var args map[string]interface{}
-		// Arguments can be a JSON string or already parsed — handle both
-		if len(tc.Function.Arguments) > 0 {
-			json.Unmarshal(tc.Function.Arguments, &args)
-		}
 		toolCalls = append(toolCalls, ToolCall{
 			ID:        tc.ID,
 			Name:      tc.Function.Name,
-			Arguments: args,
+			Arguments: parseToolCallArgs(tc.Function.Arguments),
 		})
 	}
 

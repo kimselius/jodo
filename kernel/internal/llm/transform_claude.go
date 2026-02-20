@@ -19,9 +19,8 @@ func NewClaudeProvider(cfg config.ProviderConfig) *ClaudeProvider {
 	}
 }
 
-func (c *ClaudeProvider) Name() string         { return "claude" }
-func (c *ClaudeProvider) SupportsTools() bool   { return true }
-func (c *ClaudeProvider) SupportsEmbed() bool   { return false }
+func (c *ClaudeProvider) Name() string       { return "claude" }
+func (c *ClaudeProvider) SupportsEmbed() bool { return false }
 
 func (c *ClaudeProvider) BuildRequest(req *JodoRequest, model string) (*ProviderHTTPRequest, error) {
 	body := map[string]interface{}{
@@ -30,9 +29,6 @@ func (c *ClaudeProvider) BuildRequest(req *JodoRequest, model string) (*Provider
 	}
 	if req.System != "" {
 		body["system"] = req.System
-	}
-	if req.Temperature > 0 {
-		body["temperature"] = req.Temperature
 	}
 
 	// Transform messages: Jodo Format → Claude format
@@ -74,9 +70,9 @@ func (c *ClaudeProvider) BuildRequest(req *JodoRequest, model string) (*Provider
 	return &ProviderHTTPRequest{
 		URL: "https://api.anthropic.com/v1/messages",
 		Headers: map[string]string{
-			"Content-Type":      "application/json",
-			"x-api-key":         c.apiKey,
-			"anthropic-version": "2023-06-01",
+			"Content-Type":     "application/json",
+			"x-api-key":        c.apiKey,
+			"anthropic-version": "2023-06-01", // required by Anthropic API
 		},
 		Body: jsonBody,
 	}, nil

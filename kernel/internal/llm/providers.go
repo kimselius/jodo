@@ -9,7 +9,6 @@ import (
 // and embedding generation. The proxy owns HTTP execution for chat.
 type Provider interface {
 	Name() string
-	SupportsTools() bool
 	SupportsEmbed() bool
 
 	// BuildRequest transforms a JodoRequest into a provider-specific HTTP request.

@@ -73,8 +73,7 @@ func (m ModelConfig) ModelName(mapKey string) string {
 }
 
 type RoutingConfig struct {
-	Strategy          string              `yaml:"strategy"`
-	IntentPreferences map[string][]string `yaml:"intent_preferences"`
+	IntentPreferences map[string][]string `yaml:"intent_preferences" json:"intent_preferences"`
 }
 
 type Genesis struct {

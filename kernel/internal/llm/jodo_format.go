@@ -3,15 +3,14 @@ package llm
 // JodoRequest is what Jodo sends to POST /api/think.
 // The kernel translates this to whatever format the chosen provider needs.
 type JodoRequest struct {
-	Intent      string        `json:"intent"`
-	System      string        `json:"system,omitempty"`
-	Messages    []JodoMessage `json:"messages"`
-	Tools       []ToolDef     `json:"tools,omitempty"`
-	ToolChoice  string        `json:"tool_choice,omitempty"` // auto, none, required
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-	Temperature float64       `json:"temperature,omitempty"`
-	MaxCost     float64       `json:"max_cost,omitempty"`
-	ChainID     string        `json:"chain_id,omitempty"`
+	Intent     string        `json:"intent"`
+	System     string        `json:"system,omitempty"`
+	Messages   []JodoMessage `json:"messages"`
+	Tools      []ToolDef     `json:"tools,omitempty"`
+	ToolChoice string        `json:"tool_choice,omitempty"` // auto, none, required
+	MaxTokens  int           `json:"max_tokens,omitempty"`
+	MaxCost    float64       `json:"max_cost,omitempty"`
+	ChainID    string        `json:"chain_id,omitempty"`
 }
 
 // JodoMessage is a message in Jodo Format. Roles: user, assistant, tool_result.

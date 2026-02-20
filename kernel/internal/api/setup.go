@@ -321,7 +321,6 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 		"jodo.app_port":                "9000",
 		"jodo.brain_path":              "/opt/jodo/brain",
 		"jodo.health_endpoint":         "/health",
-		"routing.strategy":             "best_affordable",
 	}
 	for k, v := range defaults {
 		if s.ConfigStore.GetConfig(k) == "" {
@@ -499,7 +498,10 @@ func (s *Server) buildRoutingFromModels() map[string][]string {
 		quality int
 	}
 
-	// Collect models per capability
+	// Valid intents — only these become routing keys (not raw capabilities like "tools")
+	validIntents := map[string]bool{"code": true, "plan": true, "chat": true, "embed": true}
+
+	// Collect models per intent (filtering to valid intents only)
 	capModels := make(map[string][]modelEntry)
 	for rows.Next() {
 		var modelKey, providerName string
@@ -510,7 +512,9 @@ func (s *Server) buildRoutingFromModels() map[string][]string {
 		}
 		ref := modelKey + "@" + providerName
 		for _, cap := range caps {
-			capModels[cap] = append(capModels[cap], modelEntry{ref: ref, quality: quality})
+			if validIntents[cap] {
+				capModels[cap] = append(capModels[cap], modelEntry{ref: ref, quality: quality})
+			}
 		}
 	}
 

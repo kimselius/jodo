@@ -102,6 +102,5 @@ export interface KernelSettings {
 }
 
 export interface RoutingConfig {
-  strategy: string
   intent_preferences: Record<string, string[]>
 }

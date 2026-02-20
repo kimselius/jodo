@@ -42,7 +42,7 @@ func NewRouter(providers map[string]Provider, configs map[string]config.Provider
 // When a VRAMTracker is active, Route does two passes:
 //  1. Try only Ollama models marked "prefer_loaded" that are already in VRAM
 //  2. Normal pass — try all preferences in order (including cold Ollama models and cloud)
-func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteResult, error) {
+func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
 	preferences, ok := r.routing.IntentPreferences[intent]
 	if !ok {
 		preferences = make([]string, 0, len(r.providers))
@@ -51,15 +51,15 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 		}
 	}
 
-	// Pass 1: prefer already-loaded Ollama models marked prefer_loaded (avoids loading latency)
+	// Pass 1: prefer already-loaded Ollama models (avoids loading latency)
 	if r.vram != nil {
-		if result := r.tryRoute(preferences, intent, maxTokens, needsTools, true); result != nil {
+		if result := r.tryRoute(preferences, intent, needsTools, true); result != nil {
 			return result, nil
 		}
 	}
 
 	// Pass 2: normal routing — all candidates
-	if result := r.tryRoute(preferences, intent, maxTokens, needsTools, false); result != nil {
+	if result := r.tryRoute(preferences, intent, needsTools, false); result != nil {
 		return result, nil
 	}
 
@@ -68,7 +68,7 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 
 // tryRoute iterates preferences and returns the first viable route.
 // If onlyLoaded is true, only considers Ollama models marked PreferLoaded that are in VRAM.
-func (r *Router) tryRoute(preferences []string, intent string, maxTokens int, needsTools bool, onlyLoaded bool) *RouteResult {
+func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, onlyLoaded bool) *RouteResult {
 	for _, ref := range preferences {
 		modelKey, provName, isModelRef := config.ParseModelRef(ref)
 
@@ -77,13 +77,7 @@ func (r *Router) tryRoute(preferences []string, intent string, maxTokens int, ne
 			continue
 		}
 
-		// In loaded-only pass, skip non-Ollama providers
 		if onlyLoaded && provName != "ollama" {
-			continue
-		}
-
-		// Skip providers that don't support tools when tools are needed
-		if needsTools && !provider.SupportsTools() {
 			continue
 		}
 
@@ -97,13 +91,11 @@ func (r *Router) tryRoute(preferences []string, intent string, maxTokens int, ne
 		var found bool
 
 		if isModelRef {
-			// Direct model@provider reference — look up specific model
 			mc, found = provCfg.Models[modelKey]
 			if !found {
 				continue
 			}
 			mk = modelKey
-			// Verify capabilities
 			if !hasCapability(mc.Capabilities, intent) {
 				continue
 			}
@@ -111,39 +103,27 @@ func (r *Router) tryRoute(preferences []string, intent string, maxTokens int, ne
 				continue
 			}
 		} else {
-			// Legacy provider-only reference — pick best model
 			mk, mc, found = r.bestModelForIntent(provCfg, intent, needsTools)
 			if !found {
 				continue
 			}
 		}
 
-		// Check busy status (skip if model is overloaded)
 		if r.busy != nil && r.busy.IsBusy(provName, mk) {
 			continue
 		}
 
-		// VRAM check for Ollama
 		if r.vram != nil && provName == "ollama" {
 			if onlyLoaded {
-				// Pass 1: only use models marked prefer_loaded that are in VRAM
-				if !mc.PreferLoaded {
+				if !mc.PreferLoaded || !r.vram.IsLoaded(mc.ModelName(mk)) {
 					continue
 				}
-				if !r.vram.IsLoaded(mc.ModelName(mk)) {
-					continue
-				}
-			} else {
-				// Pass 2: check if model would fit
-				if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
-					continue
-				}
+			} else if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+				continue
 			}
 		}
 
-		estimated := EstimateCost(mc, maxTokens)
-		canAfford, _, err := r.budget.CanAfford(provName, estimated, intent)
-		if err != nil || !canAfford {
+		if !r.budget.HasBudget(provName, intent) {
 			continue
 		}
 
@@ -195,6 +175,10 @@ func (r *Router) tryRouteEmbed(preferences []string, onlyLoaded bool) *RouteResu
 			continue
 		}
 
+		if !r.budget.HasBudget(provName, "embed") {
+			continue
+		}
+
 		provCfg := r.configs[provName]
 
 		if isModelRef {
@@ -211,15 +195,12 @@ func (r *Router) tryRouteEmbed(preferences []string, onlyLoaded bool) *RouteResu
 					continue
 				}
 			}
-			canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
-			if canAfford {
-				return &RouteResult{
-					ProviderName: provName,
-					Provider:     provider,
-					Model:        mc.ModelName(modelKey),
-					ModelKey:     modelKey,
-					ModelConfig:  mc,
-				}
+			return &RouteResult{
+				ProviderName: provName,
+				Provider:     provider,
+				Model:        mc.ModelName(modelKey),
+				ModelKey:     modelKey,
+				ModelConfig:  mc,
 			}
 		} else {
 			for mk, mc := range provCfg.Models {
@@ -235,15 +216,12 @@ func (r *Router) tryRouteEmbed(preferences []string, onlyLoaded bool) *RouteResu
 						continue
 					}
 				}
-				canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
-				if canAfford {
-					return &RouteResult{
-						ProviderName: provName,
-						Provider:     provider,
-						Model:        mc.ModelName(mk),
-						ModelKey:     mk,
-						ModelConfig:  mc,
-					}
+				return &RouteResult{
+					ProviderName: provName,
+					Provider:     provider,
+					Model:        mc.ModelName(mk),
+					ModelKey:     mk,
+					ModelConfig:  mc,
 				}
 			}
 		}

@@ -125,10 +125,38 @@ export function useSetup() {
     return activeSteps.value.indexOf(currentStep.value)
   }
 
-  function nextStep() {
+  async function nextStep() {
+    error.value = null
+    try {
+      // Save data for the current step before advancing
+      await saveCurrentStep()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to save'
+      return
+    }
     const idx = currentStepIndex()
     if (idx < activeSteps.value.length - 1) {
       currentStep.value = activeSteps.value[idx + 1]
+    }
+  }
+
+  async function saveCurrentStep() {
+    const step = currentStep.value
+    if (step === 'kernel-url') {
+      await api.setupConfig(kernelUrl.value)
+    } else if (step === 'providers') {
+      const enabledProviders = providers.value.filter(p => p.enabled || p.name === 'ollama')
+      await api.setupProviders(enabledProviders)
+    } else if (step === 'routing') {
+      const nonEmptyRouting: Record<string, string[]> = {}
+      for (const [intent, refs] of Object.entries(routing.value)) {
+        if (refs.length > 0) nonEmptyRouting[intent] = refs
+      }
+      if (Object.keys(nonEmptyRouting).length > 0) {
+        await api.setupRouting(nonEmptyRouting)
+      }
+    } else if (step === 'genesis') {
+      await api.setupGenesis(genesis.value)
     }
   }
 
@@ -226,38 +254,11 @@ export function useSetup() {
     }
   }
 
-  async function saveConfig() {
-    try {
-      await api.setupConfig(kernelUrl.value)
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Failed to save config'
-    }
-  }
-
   async function birth() {
     birthing.value = true
     error.value = null
     try {
-      // Save kernel URL
-      await api.setupConfig(kernelUrl.value)
-
-      // Save providers (only enabled ones + ollama always)
-      const enabledProviders = providers.value.filter(p => p.enabled || p.name === 'ollama')
-      await api.setupProviders(enabledProviders)
-
-      // Save genesis
-      await api.setupGenesis(genesis.value)
-
-      // Save routing preferences
-      const nonEmptyRouting: Record<string, string[]> = {}
-      for (const [intent, refs] of Object.entries(routing.value)) {
-        if (refs.length > 0) nonEmptyRouting[intent] = refs
-      }
-      if (Object.keys(nonEmptyRouting).length > 0) {
-        await api.setupRouting(nonEmptyRouting)
-      }
-
-      // Birth!
+      // All step data already saved via nextStep() — just birth
       await api.setupBirth()
       return true
     } catch (e) {
@@ -291,7 +292,6 @@ export function useSetup() {
     verifySSH,
     verifyDockerSSH,
     provisionServer,
-    saveConfig,
     birth,
   }
 }

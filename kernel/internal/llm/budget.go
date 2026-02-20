@@ -34,31 +34,29 @@ func (b *BudgetTracker) SpentThisMonth(provider string) (float64, error) {
 	return spent.Float64, nil
 }
 
-// CanAfford checks if a provider has enough budget for an estimated cost.
+// HasBudget returns true if the provider still has budget remaining this month.
 // For "repair" intent, the emergency reserve is also available.
-func (b *BudgetTracker) CanAfford(provider string, estimatedCost float64, intent string) (bool, float64, error) {
+func (b *BudgetTracker) HasBudget(provider string, intent string) bool {
 	cfg, ok := b.providers[provider]
 	if !ok {
-		return false, 0, fmt.Errorf("unknown provider: %s", provider)
+		return false
 	}
 
-	// Ollama is free
+	// No budget configured = unlimited (e.g. Ollama)
 	if cfg.MonthlyBudget == 0 && cfg.EmergencyReserve == 0 {
-		return true, 0, nil
+		return true
 	}
 
 	spent, err := b.SpentThisMonth(provider)
 	if err != nil {
-		return false, 0, err
+		return false
 	}
 
 	remaining := cfg.MonthlyBudget - spent
-	available := remaining - cfg.EmergencyReserve
 	if intent == "repair" {
-		available = remaining
+		return remaining > 0
 	}
-
-	return available >= estimatedCost, available, nil
+	return remaining-cfg.EmergencyReserve > 0
 }
 
 // LogUsage records a completed API call's cost.
@@ -75,11 +73,6 @@ func CalculateCost(modelCfg config.ModelConfig, tokensIn, tokensOut int) float64
 	inCost := float64(tokensIn) * modelCfg.InputCostPer1MTokens / 1_000_000
 	outCost := float64(tokensOut) * modelCfg.OutputCostPer1MTokens / 1_000_000
 	return inCost + outCost
-}
-
-// EstimateCost gives a rough upper-bound cost estimate for a request.
-func EstimateCost(modelCfg config.ModelConfig, maxTokens int) float64 {
-	return CalculateCost(modelCfg, 500, maxTokens)
 }
 
 // GetAllBudgetStatus returns budget status for all providers.

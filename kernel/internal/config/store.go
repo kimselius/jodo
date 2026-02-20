@@ -344,13 +344,6 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 	}
 
 	// Routing config
-	cfg.Routing = RoutingConfig{
-		Strategy: s.GetConfig("routing.strategy"),
-	}
-	if cfg.Routing.Strategy == "" {
-		cfg.Routing.Strategy = "best_affordable"
-	}
-
 	intentPrefJSON := s.GetConfig("routing.intent_preferences")
 	if intentPrefJSON != "" {
 		json.Unmarshal([]byte(intentPrefJSON), &cfg.Routing.IntentPreferences)
@@ -431,12 +424,7 @@ func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
 
 // GetRoutingConfig returns the current routing config.
 func (s *DBStore) GetRoutingConfig() RoutingConfig {
-	rc := RoutingConfig{
-		Strategy: s.GetConfig("routing.strategy"),
-	}
-	if rc.Strategy == "" {
-		rc.Strategy = "best_affordable"
-	}
+	var rc RoutingConfig
 	ipJSON := s.GetConfig("routing.intent_preferences")
 	if ipJSON != "" {
 		json.Unmarshal([]byte(ipJSON), &rc.IntentPreferences)
@@ -446,9 +434,6 @@ func (s *DBStore) GetRoutingConfig() RoutingConfig {
 
 // SaveRoutingConfig saves the routing config.
 func (s *DBStore) SaveRoutingConfig(rc RoutingConfig) error {
-	if err := s.SetConfig("routing.strategy", rc.Strategy); err != nil {
-		return err
-	}
 	if len(rc.IntentPreferences) > 0 {
 		ipJSON, _ := json.Marshal(rc.IntentPreferences)
 		return s.SetConfig("routing.intent_preferences", string(ipJSON))
