@@ -157,24 +157,55 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	// Execute HTTP call
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", provReq.URL, bytes.NewReader(provReq.Body))
-	if err != nil {
-		return nil, fmt.Errorf("create http request: %w", err)
-	}
-	for k, v := range provReq.Headers {
-		httpReq.Header.Set(k, v)
-	}
+	// Execute HTTP call with retry for transient errors (429, 529, etc.)
+	var respBody []byte
+	var statusCode int
+	backoff := time.Second
+	const maxRetries = 3
 
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request to %s: %w", route.ProviderName, err)
+	for attempt := 0; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", provReq.URL, bytes.NewReader(provReq.Body))
+		if err != nil {
+			return nil, fmt.Errorf("create http request: %w", err)
+		}
+		for k, v := range provReq.Headers {
+			httpReq.Header.Set(k, v)
+		}
+
+		resp, err := p.client.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries && ctx.Err() == nil {
+				log.Printf("[llm] request to %s failed: %v, retrying in %v (%d/%d)", route.ProviderName, err, backoff, attempt+1, maxRetries)
+				select {
+				case <-time.After(backoff):
+					backoff *= 2
+					continue
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			return nil, fmt.Errorf("http request to %s: %w", route.ProviderName, err)
+		}
+
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		statusCode = resp.StatusCode
+
+		if !isRetryableStatus(statusCode) || attempt >= maxRetries {
+			break
+		}
+
+		log.Printf("[llm] %s returned %d, retrying in %v (%d/%d)", route.ProviderName, statusCode, backoff, attempt+1, maxRetries)
+		select {
+		case <-time.After(backoff):
+			backoff *= 2
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 
 	// Parse provider-specific response into Jodo Format
-	provResp, err := route.Provider.ParseResponse(resp.StatusCode, respBody)
+	provResp, err := route.Provider.ParseResponse(statusCode, respBody)
 	if err != nil {
 		if p.Audit != nil {
 			p.Audit.Log(audit.Entry{
@@ -316,4 +347,17 @@ func (p *Proxy) Embed(ctx context.Context, text string) (*EmbedResponse, error) 
 		TokensIn:  tokensIn,
 		Cost:      cost,
 	}, nil
+}
+
+// isRetryableStatus returns true for HTTP status codes that indicate transient errors
+// worth retrying: rate limits, server overload, bad gateway.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case 429, // rate limited
+		502, // bad gateway
+		503, // service unavailable
+		529: // overloaded (Anthropic-specific)
+		return true
+	}
+	return false
 }
