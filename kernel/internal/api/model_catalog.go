@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -275,106 +276,100 @@ func containsStr(slice []string, s string) bool {
 	return false
 }
 
-// matchOllamaModel returns recommended defaults for a discovered Ollama model
-// based on its name and family.
-func matchOllamaModel(name, family string) *knownModel {
+// buildOllamaDefaults builds recommended defaults for a discovered Ollama model
+// using the Ollama API response instead of a hardcoded model catalog.
+//
+// Rules:
+//   - Embedding models (name contains "embed", or known embed-only names) → ["embed"]
+//   - All other models → ["chat", "code"]
+//   - Ollama reports "tools" capability → add "tools"
+//   - Ollama reports "thinking" capability → add "plan" (thinking = structured reasoning)
+//   - Quality derived from parameter size
+func buildOllamaDefaults(name, family, paramSize string, apiCaps []string) *knownModel {
 	nameLower := strings.ToLower(name)
 
-	// 1. Check name for embedding/embed — these are always embedding-only models
-	if strings.Contains(nameLower, "embed") {
-		return &knownModel{
-			ModelKey: name, ModelName: name,
-			Capabilities: []string{"embed"},
-			Quality: 65, Description: "Embedding model",
-		}
+	km := &knownModel{
+		ModelKey:  name,
+		ModelName: name,
 	}
 
-	// 2. Check for reasoning models (deepseek-r1, qwq, etc.)
-	if strings.Contains(nameLower, "-r1") || strings.HasPrefix(nameLower, "qwq") ||
-		strings.Contains(nameLower, "reasoning") {
-		return &knownModel{
-			ModelKey: name, ModelName: name,
-			Capabilities: []string{"chat", "code", "reasoning"},
-			Quality: 80, Description: "Reasoning model",
-		}
+	// Embedding detection: name contains "embed" or known embedding-only model names
+	if isEmbeddingModel(nameLower) {
+		km.Capabilities = []string{"embed"}
+		km.Quality = qualityFromParamSize(paramSize, 65)
+		km.Description = "Embedding model"
+		return km
 	}
 
-	// 3. Check for code-specialized models
-	if strings.Contains(nameLower, "coder") || strings.Contains(nameLower, "codellama") ||
-		strings.HasPrefix(nameLower, "starcoder") || strings.HasPrefix(nameLower, "codestral") {
-		return &knownModel{
-			ModelKey: name, ModelName: name,
-			Capabilities: []string{"code", "chat"},
-			Quality: 70, Description: "Code-specialized model",
-		}
+	// All non-embedding models get chat + code
+	km.Capabilities = []string{"chat", "code"}
+
+	// Add tools/plan from Ollama API capabilities
+	if containsStr(apiCaps, "tools") {
+		km.Capabilities = append(km.Capabilities, "tools")
+	}
+	if containsStr(apiCaps, "thinking") {
+		km.Capabilities = append(km.Capabilities, "plan")
 	}
 
-	// 4. Known model families with sensible defaults (ordered: more specific first)
-	type ollamaPattern struct {
-		prefix string
-		model  knownModel
-	}
-	patterns := []ollamaPattern{
-		{"deepseek-v3", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 85, Description: "DeepSeek V3 model"}},
-		{"deepseek-coder", knownModel{Capabilities: []string{"code", "chat"}, Quality: 70, Description: "DeepSeek Coder model"}},
-		{"deepseek", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 75, Description: "DeepSeek model"}},
-		{"llama4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 80, Description: "Meta Llama 4 model"}},
-		{"llama3.3", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 78, Description: "Meta Llama 3.3 model"}},
-		{"llama3.2", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Meta Llama 3.2 model"}},
-		{"llama3.1", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Meta Llama 3.1 model"}},
-		{"llama", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Meta Llama model"}},
-		{"qwen3", knownModel{Capabilities: []string{"chat", "code", "tools", "reasoning"}, Quality: 78, Description: "Alibaba Qwen3 model"}},
-		{"qwen2.5-coder", knownModel{Capabilities: []string{"code", "chat", "tools"}, Quality: 75, Description: "Qwen 2.5 Coder model"}},
-		{"qwen2.5", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Alibaba Qwen 2.5 model"}},
-		{"qwen2", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Alibaba Qwen2 model"}},
-		{"gemma3", knownModel{Capabilities: []string{"chat", "code"}, Quality: 72, Description: "Google Gemma 3 model"}},
-		{"gemma2", knownModel{Capabilities: []string{"chat", "code"}, Quality: 70, Description: "Google Gemma 2 model"}},
-		{"gemma", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "Google Gemma model"}},
-		{"mistral-small", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Mistral Small model"}},
-		{"mistral-large", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 82, Description: "Mistral Large model"}},
-		{"mistral-nemo", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Mistral Nemo model"}},
-		{"mistral", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Mistral AI model"}},
-		{"mixtral", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Mixtral MoE model"}},
-		{"codestral", knownModel{Capabilities: []string{"code", "chat", "tools"}, Quality: 78, Description: "Mistral Codestral model"}},
-		{"phi4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Microsoft Phi-4 model"}},
-		{"phi3.5", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "Microsoft Phi-3.5 model"}},
-		{"phi3", knownModel{Capabilities: []string{"chat", "code"}, Quality: 62, Description: "Microsoft Phi-3 model"}},
-		{"phi", knownModel{Capabilities: []string{"chat", "code"}, Quality: 60, Description: "Microsoft Phi model"}},
-		{"command-r", knownModel{Capabilities: []string{"chat", "tools"}, Quality: 72, Description: "Cohere Command-R model"}},
-		{"aya", knownModel{Capabilities: []string{"chat"}, Quality: 60, Description: "Cohere Aya multilingual model"}},
-		{"glm4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "GLM-4 model"}},
-		{"glm-4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "GLM-4 model"}},
-		{"yi", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "01.AI Yi model"}},
-		{"internlm", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "InternLM model"}},
-		{"nomic-embed", knownModel{Capabilities: []string{"embed"}, Quality: 60, Description: "Nomic embedding model"}},
-		{"mxbai-embed", knownModel{Capabilities: []string{"embed"}, Quality: 70, Description: "Mixedbread embedding model"}},
-		{"all-minilm", knownModel{Capabilities: []string{"embed"}, Quality: 50, Description: "All-MiniLM embedding model"}},
-		{"snowflake-arctic-embed", knownModel{Capabilities: []string{"embed"}, Quality: 68, Description: "Snowflake Arctic embedding model"}},
-		{"bge-", knownModel{Capabilities: []string{"embed"}, Quality: 65, Description: "BGE embedding model"}},
-	}
+	km.Quality = qualityFromParamSize(paramSize, 65)
 
-	// Try name prefix match (ordered, so more specific patterns match first)
-	for _, p := range patterns {
-		if strings.HasPrefix(nameLower, p.prefix) {
-			result := p.model
-			result.ModelKey = name
-			result.ModelName = name
-			return &result
-		}
-	}
-
-	// 5. Try family match as fallback
+	// Description from family or base model name
 	if family != "" {
-		familyLower := strings.ToLower(family)
-		for _, p := range patterns {
-			if familyLower == p.prefix || strings.HasPrefix(familyLower, p.prefix) {
-				result := p.model
-				result.ModelKey = name
-				result.ModelName = name
-				return &result
-			}
+		km.Description = family + " model"
+	} else {
+		base := name
+		if idx := strings.Index(name, ":"); idx > 0 {
+			base = name[:idx]
 		}
+		km.Description = base
 	}
 
-	return nil
+	return km
+}
+
+// isEmbeddingModel detects embedding-only models from their name.
+func isEmbeddingModel(nameLower string) bool {
+	if strings.Contains(nameLower, "embed") {
+		return true
+	}
+	// Known embedding models without "embed" in the name
+	embedPrefixes := []string{"all-minilm", "bge-", "bge:"}
+	for _, p := range embedPrefixes {
+		if strings.HasPrefix(nameLower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// qualityFromParamSize derives a quality score from the model's parameter size string.
+// paramSize is typically "7B", "13B", "70B", "1.5B", etc.
+func qualityFromParamSize(paramSize string, defaultQuality int) int {
+	if paramSize == "" {
+		return defaultQuality
+	}
+
+	s := strings.ToLower(strings.TrimSpace(paramSize))
+	s = strings.TrimSuffix(s, "b")
+
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return defaultQuality
+	}
+
+	switch {
+	case val >= 70:
+		return 88
+	case val >= 30:
+		return 80
+	case val >= 13:
+		return 72
+	case val >= 7:
+		return 65
+	case val >= 3:
+		return 55
+	default:
+		return 40
+	}
 }

@@ -160,31 +160,8 @@ func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 			dm.HasThinking = containsStr(apiCaps, "thinking")
 		}
 
-		// Match against known Ollama model families for recommended defaults
-		if rec := matchOllamaModel(m.Name, m.Details.Family); rec != nil {
-			// Override tool support from API if available
-			if dm.SupportsTools != nil {
-				if *dm.SupportsTools {
-					if !containsStr(rec.Capabilities, "tools") {
-						rec.Capabilities = append(rec.Capabilities, "tools")
-					}
-				} else {
-					// Remove "tools" from capabilities if API says no tools
-					filtered := make([]string, 0, len(rec.Capabilities))
-					for _, c := range rec.Capabilities {
-						if c != "tools" {
-							filtered = append(filtered, c)
-						}
-					}
-					rec.Capabilities = filtered
-				}
-			}
-			// Add "plan" capability for non-embedding models (any model that can code/chat can plan)
-			if !containsStr(rec.Capabilities, "plan") && !containsStr(rec.Capabilities, "embed") && rec.Quality >= 60 {
-				rec.Capabilities = append(rec.Capabilities, "plan")
-			}
-			dm.Recommended = rec
-		}
+		// Build recommended defaults from Ollama API capabilities + parameter size
+		dm.Recommended = buildOllamaDefaults(m.Name, m.Details.Family, m.Details.ParameterSize, apiCaps)
 		models = append(models, dm)
 	}
 
