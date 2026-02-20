@@ -107,10 +107,11 @@ function handleToggle(id: number) {
 
     <div v-else>
       <!-- Table header -->
-      <div class="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider border-b border-border">
+      <div class="grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] gap-2 px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider border-b border-border">
         <span class="w-10 text-right">#</span>
         <span>Intent / Model</span>
-        <span class="text-right w-16">Tokens</span>
+        <span class="text-right w-14">In</span>
+        <span class="text-right w-14">Out</span>
         <span class="text-right w-16">Cost</span>
         <span class="text-right w-14">Time</span>
         <span class="text-right w-28">When</span>
@@ -122,7 +123,7 @@ function handleToggle(id: number) {
         <div
           @click="handleToggle(call.id)"
           :class="[
-            'grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-2 px-2 py-2 text-sm cursor-pointer transition-colors border-b border-border/50',
+            'grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] gap-2 px-2 py-2 text-sm cursor-pointer transition-colors border-b border-border/50',
             selectedCall?.id === call.id
               ? 'bg-primary/5 border-b-0'
               : 'hover:bg-secondary/30',
@@ -136,7 +137,8 @@ function handleToggle(id: number) {
               <span class="text-xs text-muted-foreground truncate">{{ fmtModel(call.provider, call.model) }}</span>
             </div>
           </div>
-          <span class="text-xs text-muted-foreground text-right w-16 tabular-nums">{{ fmtTokens(call.tokens_in + call.tokens_out) }}</span>
+          <span class="text-xs text-muted-foreground text-right w-14 tabular-nums">{{ fmtTokens(call.tokens_in) }}</span>
+          <span class="text-xs text-muted-foreground text-right w-14 tabular-nums">{{ fmtTokens(call.tokens_out) }}</span>
           <span class="text-xs text-muted-foreground text-right w-16 tabular-nums">{{ fmtCost(call.cost) }}</span>
           <span class="text-xs text-muted-foreground text-right w-14 tabular-nums">{{ fmtDuration(call.duration_ms) }}</span>
           <span class="text-xs text-muted-foreground text-right w-28">{{ fmtTime(call.created_at) }}</span>
@@ -183,25 +185,31 @@ function handleToggle(id: number) {
               <pre class="text-xs bg-secondary/30 rounded-md p-3 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">{{ extractLastUserMessage(selectedCall.request_messages) }}</pre>
             </div>
 
-            <!-- Response -->
-            <div v-if="selectedCall.response_content">
+            <!-- Response: text content and/or tool calls -->
+            <div v-if="selectedCall.response_content || selectedCall.response_tool_calls?.length">
               <p class="text-xs font-medium text-muted-foreground mb-1">Response</p>
-              <pre class="text-xs bg-secondary/30 rounded-md p-3 whitespace-pre-wrap break-words max-h-60 overflow-y-auto">{{ selectedCall.response_content }}</pre>
-            </div>
-
-            <!-- Tool Calls (collapsible, if present) -->
-            <div v-if="selectedCall.response_tool_calls?.length">
-              <button
-                @click="toggleSection('tool-calls')"
-                class="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span class="text-[10px]">{{ isSectionOpen('tool-calls') ? '▾' : '▸' }}</span>
-                Tool Calls ({{ selectedCall.response_tool_calls.length }})
-              </button>
+              <!-- Text content -->
               <pre
-                v-if="isSectionOpen('tool-calls')"
-                class="mt-1 text-xs bg-secondary/30 rounded-md p-3 whitespace-pre-wrap break-words max-h-48 overflow-y-auto"
-              >{{ tryFormatJSON(selectedCall.response_tool_calls) }}</pre>
+                v-if="selectedCall.response_content"
+                class="text-xs bg-secondary/30 rounded-md p-3 whitespace-pre-wrap break-words max-h-60 overflow-y-auto"
+                :class="selectedCall.response_tool_calls?.length ? 'mb-2' : ''"
+              >{{ selectedCall.response_content }}</pre>
+              <!-- Tool calls (shown inline as part of the response, not hidden) -->
+              <div v-if="selectedCall.response_tool_calls?.length" class="space-y-1.5">
+                <div
+                  v-for="(tc, i) in selectedCall.response_tool_calls"
+                  :key="i"
+                  class="rounded-md bg-secondary/30 p-2.5"
+                >
+                  <span class="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded mb-1 bg-amber-500/15 text-amber-400">
+                    {{ (tc as any).name || 'tool' }}
+                  </span>
+                  <pre class="text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto">{{ tryFormatJSON((tc as any).arguments || (tc as any).input || tc) }}</pre>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="!selectedCall.error">
+              <p class="text-xs text-muted-foreground italic">No response content</p>
             </div>
 
             <!-- Request Tools (collapsible, if present) -->
