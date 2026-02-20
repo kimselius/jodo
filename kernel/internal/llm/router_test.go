@@ -63,7 +63,7 @@ func TestRouteByIntent(t *testing.T) {
 	busy := NewBusyTracker(map[string]string{"cloud": "openai"})
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	result, err := router.Route("chat", false)
+	result, err := router.Route("chat")
 	if err != nil {
 		t.Fatalf("Route(chat) failed: %v", err)
 	}
@@ -72,44 +72,6 @@ func TestRouteByIntent(t *testing.T) {
 	}
 	if result.Model != "gpt-4" {
 		t.Errorf("expected model gpt-4, got %s", result.Model)
-	}
-}
-
-func TestRouteToolsRequired(t *testing.T) {
-	providers := map[string]Provider{
-		"cloud": &stubProvider{name: "cloud"},
-	}
-	configs := map[string]config.ProviderConfig{
-		"cloud": {
-			Models: map[string]config.ModelConfig{
-				"no-tools": {
-					Capabilities: []string{"chat"},
-					Quality:      90,
-				},
-				"with-tools": {
-					Capabilities: []string{"chat", "tools"},
-					Quality:      80,
-				},
-			},
-		},
-	}
-	routing := config.RoutingConfig{
-		IntentPreferences: map[string][]string{
-			"chat": {"cloud"},
-		},
-	}
-
-	budget := newUnlimitedBudget()
-	busy := NewBusyTracker(map[string]string{"cloud": "openai"})
-	router := NewRouter(providers, configs, routing, budget, busy, nil)
-
-	result, err := router.Route("chat", true)
-	if err != nil {
-		t.Fatalf("Route(chat, needsTools=true) failed: %v", err)
-	}
-	// Must pick "with-tools" since needsTools=true
-	if result.ModelKey != "with-tools" {
-		t.Errorf("expected model with-tools, got %s", result.ModelKey)
 	}
 }
 
@@ -137,7 +99,7 @@ func TestRouteNoViableProvider(t *testing.T) {
 	busy := NewBusyTracker(map[string]string{"cloud": "openai"})
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	_, err := router.Route("embed", false)
+	_, err := router.Route("embed")
 	if err == nil {
 		t.Fatal("expected error for no viable provider, got nil")
 	}
@@ -175,7 +137,7 @@ func TestRouteBestModelByQuality(t *testing.T) {
 	busy := NewBusyTracker(map[string]string{"cloud": "openai"})
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	result, err := router.Route("chat", false)
+	result, err := router.Route("chat")
 	if err != nil {
 		t.Fatalf("Route(chat) failed: %v", err)
 	}
@@ -213,7 +175,7 @@ func TestRouteModelAtProvider(t *testing.T) {
 	busy := NewBusyTracker(map[string]string{"cloud": "openai"})
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	result, err := router.Route("chat", false)
+	result, err := router.Route("chat")
 	if err != nil {
 		t.Fatalf("Route(chat) failed: %v", err)
 	}
@@ -297,7 +259,7 @@ func TestRouteRespectsPreferenceOrder(t *testing.T) {
 	// No VRAM tracker — both models are viable
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	result, err := router.Route("code", false)
+	result, err := router.Route("code")
 	if err != nil {
 		t.Fatalf("Route(code) failed: %v", err)
 	}
@@ -343,7 +305,7 @@ func TestRoutePreferenceOrderWithVRAM(t *testing.T) {
 	vram := &VRAMTracker{totalVRAM: 48 * 1024 * 1024 * 1024}
 	router := NewRouter(providers, configs, routing, budget, busy, vram)
 
-	result, err := router.Route("code", false)
+	result, err := router.Route("code")
 	if err != nil {
 		t.Fatalf("Route(code) failed: %v", err)
 	}
@@ -390,7 +352,7 @@ func TestRouteFallsThrough(t *testing.T) {
 	busy := NewBusyTracker(map[string]string{"a": "ollama", "b": "openai"})
 	router := NewRouter(providers, configs, routing, budget, busy, nil)
 
-	result, err := router.Route("chat", false)
+	result, err := router.Route("chat")
 	if err != nil {
 		t.Fatalf("Route failed: %v", err)
 	}

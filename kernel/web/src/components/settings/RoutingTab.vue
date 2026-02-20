@@ -30,7 +30,7 @@ const intents = ['code', 'plan', 'chat', 'embed']
 
 // Build master list of all enabled model@provider refs
 const availableModels = computed(() => {
-  const models: { ref: string; modelKey: string; provider: string; quality: number; capabilities: string[] }[] = []
+  const models: { ref: string; modelKey: string; provider: string; quality: number; capabilities: string[]; supportsTools: boolean | null }[] = []
   for (const p of props.providers) {
     if (!p.enabled) continue
     for (const m of p.models) {
@@ -41,6 +41,7 @@ const availableModels = computed(() => {
         provider: p.name,
         quality: m.quality,
         capabilities: m.capabilities,
+        supportsTools: m.supports_tools,
       })
     }
   }
@@ -70,12 +71,19 @@ function parseRef(ref: string) {
 }
 
 // Models available to add for a specific intent (not already in the list)
+// For chat/code/plan: require tool support (unless it's an embedding model or tools status is unknown)
 function addableModels(intent: string) {
   const current = new Set(form.value.intent_preferences?.[intent] || [])
   return availableModels.value.filter(m => {
     if (current.has(m.ref)) return false
     // Filter by capability match
-    return m.capabilities.includes(intent)
+    if (!m.capabilities.includes(intent)) return false
+    // For non-embed intents, require tool support — but skip check for
+    // embedding models and models where supports_tools is unknown (cloud providers)
+    if (intent !== 'embed' && m.supportsTools === false && !m.capabilities.includes('embed')) {
+      return false
+    }
+    return true
   })
 }
 

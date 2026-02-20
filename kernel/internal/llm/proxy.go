@@ -132,13 +132,12 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 	p.mu.RUnlock()
 
 	// Route to best affordable provider
-	needsTools := len(req.Tools) > 0
-	route, err := router.Route(req.Intent, needsTools)
+	route, err := router.Route(req.Intent)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("[llm] routing %q intent to %s/%s (tools=%v)", req.Intent, route.ProviderName, route.Model, needsTools)
+	log.Printf("[llm] routing %q intent to %s/%s", req.Intent, route.ProviderName, route.Model)
 
 	// Audit: log the incoming request
 	start := time.Now()

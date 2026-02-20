@@ -38,13 +38,16 @@ func NewRouter(providers map[string]Provider, configs map[string]config.Provider
 	}
 }
 
-// Route picks the best provider for the given intent, budget, and tool requirements.
+// Route picks the best provider for the given intent.
 // Supports both "model@provider" references and legacy "provider" references.
+//
+// Tool support is NOT checked here — models in the routing config are pre-vetted
+// at setup/settings time. Only embedding models are exempt from the tools requirement.
 //
 // When a VRAMTracker is active, Route does two passes:
 //  1. Try only Ollama models marked "prefer_loaded" that are already in VRAM
 //  2. Normal pass — try all preferences in order (including cold Ollama models and cloud)
-func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
+func (r *Router) Route(intent string) (*RouteResult, error) {
 	preferences, ok := r.routing.IntentPreferences[intent]
 	if !ok {
 		preferences = make([]string, 0, len(r.providers))
@@ -53,11 +56,11 @@ func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
 		}
 	}
 
-	log.Printf("[router] routing intent=%q tools=%v preferences=[%s]", intent, needsTools, strings.Join(preferences, ", "))
+	log.Printf("[router] routing intent=%q preferences=[%s]", intent, strings.Join(preferences, ", "))
 
 	// Pass 1: prefer already-loaded Ollama models (avoids loading latency)
 	if r.vram != nil {
-		if result := r.tryRoute(preferences, intent, needsTools, true); result != nil {
+		if result := r.tryRoute(preferences, intent, true); result != nil {
 			log.Printf("[router] pass1 selected: %s/%s (already loaded in VRAM)", result.ProviderName, result.Model)
 			return result, nil
 		}
@@ -65,7 +68,7 @@ func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
 	}
 
 	// Pass 2: normal routing — all candidates in preference order
-	if result := r.tryRoute(preferences, intent, needsTools, false); result != nil {
+	if result := r.tryRoute(preferences, intent, false); result != nil {
 		log.Printf("[router] pass2 selected: %s/%s", result.ProviderName, result.Model)
 		return result, nil
 	}
@@ -76,7 +79,7 @@ func (r *Router) Route(intent string, needsTools bool) (*RouteResult, error) {
 
 // tryRoute iterates preferences and returns the first viable route.
 // If onlyLoaded is true, only considers Ollama models marked PreferLoaded that are in VRAM.
-func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, onlyLoaded bool) *RouteResult {
+func (r *Router) tryRoute(preferences []string, intent string, onlyLoaded bool) *RouteResult {
 	pass := "pass2"
 	if onlyLoaded {
 		pass = "pass1"
@@ -114,17 +117,13 @@ func (r *Router) tryRoute(preferences []string, intent string, needsTools bool, 
 			}
 			mk = modelKey
 			if !hasCapability(mc.Capabilities, intent) {
-				log.Printf("[router] %s [%d] %s: skip — missing capability %q (has: %v)", pass, i, ref, intent, mc.Capabilities)
-				continue
-			}
-			if needsTools && !hasCapability(mc.Capabilities, "tools") {
-				log.Printf("[router] %s [%d] %s: skip — needs tools but model lacks tools capability", pass, i, ref)
+				log.Printf("[router] %s [%d] %s: skip — missing intent %q (has: %v)", pass, i, ref, intent, mc.Capabilities)
 				continue
 			}
 		} else {
-			mk, mc, found = r.bestModelForIntent(provCfg, intent, needsTools)
+			mk, mc, found = r.bestModelForIntent(provCfg, intent)
 			if !found {
-				log.Printf("[router] %s [%d] %s: skip — no model with capability %q in provider", pass, i, ref, intent)
+				log.Printf("[router] %s [%d] %s: skip — no model with intent %q in provider", pass, i, ref, intent)
 				continue
 			}
 		}
@@ -270,17 +269,13 @@ func (r *Router) tryRouteEmbed(preferences []string, onlyLoaded bool) *RouteResu
 }
 
 // bestModelForIntent finds the highest-quality model that supports the given intent.
-// If needsTools is true, the model must have the "tools" capability.
-func (r *Router) bestModelForIntent(provCfg config.ProviderConfig, intent string, needsTools bool) (string, config.ModelConfig, bool) {
+func (r *Router) bestModelForIntent(provCfg config.ProviderConfig, intent string) (string, config.ModelConfig, bool) {
 	var bestKey string
 	var bestCfg config.ModelConfig
 	bestQuality := -1
 
 	for key, cfg := range provCfg.Models {
 		if !hasCapability(cfg.Capabilities, intent) {
-			continue
-		}
-		if needsTools && !hasCapability(cfg.Capabilities, "tools") {
 			continue
 		}
 		if cfg.Quality > bestQuality {
@@ -293,9 +288,9 @@ func (r *Router) bestModelForIntent(provCfg config.ProviderConfig, intent string
 	return bestKey, bestCfg, bestQuality >= 0
 }
 
-func hasCapability(caps []string, intent string) bool {
+func hasCapability(caps []string, cap string) bool {
 	for _, c := range caps {
-		if c == intent {
+		if c == cap {
 			return true
 		}
 	}

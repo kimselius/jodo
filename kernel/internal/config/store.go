@@ -441,6 +441,15 @@ func (s *DBStore) SaveRoutingConfig(rc RoutingConfig) error {
 	return nil
 }
 
+func sliceContains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 func nullIfEmpty(s string) sql.NullString {
 	if s == "" {
 		return sql.NullString{}

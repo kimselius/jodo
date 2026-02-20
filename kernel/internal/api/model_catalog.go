@@ -141,12 +141,6 @@ func enrichModel(id, displayName, provider string) knownModel {
 		if pe.Mode == "embedding" {
 			caps = append(caps, "embed")
 		}
-		if pe.SupportsFunctions {
-			caps = append(caps, "tools")
-		}
-		if pe.SupportsReasoning {
-			caps = append(caps, "reasoning")
-		}
 		if len(caps) > 0 {
 			km.Capabilities = caps
 		}
@@ -175,7 +169,7 @@ func enrichModel(id, displayName, provider string) knownModel {
 		if isEmbed {
 			km.Capabilities = []string{"embed"}
 		} else {
-			km.Capabilities = []string{"chat", "tools"}
+			km.Capabilities = []string{"chat"}
 		}
 	}
 	if km.Tier == "" {
@@ -282,9 +276,10 @@ func containsStr(slice []string, s string) bool {
 // Rules:
 //   - Embedding models (name contains "embed", or known embed-only names) → ["embed"]
 //   - All other models → ["chat", "code"]
-//   - Ollama reports "tools" capability → add "tools"
 //   - Ollama reports "thinking" capability → add "plan" (thinking = structured reasoning)
 //   - Quality derived from parameter size
+//   - NOTE: Ollama "tools" capability is tracked separately via supports_tools, NOT in capabilities.
+//     Capabilities only contain kernel intents: code, plan, chat, embed.
 func buildOllamaDefaults(name, family, paramSize string, apiCaps []string) *knownModel {
 	nameLower := strings.ToLower(name)
 
@@ -304,10 +299,7 @@ func buildOllamaDefaults(name, family, paramSize string, apiCaps []string) *know
 	// All non-embedding models get chat + code
 	km.Capabilities = []string{"chat", "code"}
 
-	// Add tools/plan from Ollama API capabilities
-	if containsStr(apiCaps, "tools") {
-		km.Capabilities = append(km.Capabilities, "tools")
-	}
+	// Add plan capability from Ollama "thinking" capability
 	if containsStr(apiCaps, "thinking") {
 		km.Capabilities = append(km.Capabilities, "plan")
 	}
