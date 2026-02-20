@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,7 @@ type Proxy struct {
 	VRAM    *VRAMTracker
 	Chains  *ChainTracker
 	Audit   *audit.Logger
+	DB      *sql.DB
 	client  *http.Client
 	configs map[string]config.ProviderConfig
 }
@@ -72,6 +74,7 @@ func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, rout
 		Busy:    busy,
 		VRAM:    vram,
 		Chains:  NewChainTracker(),
+		DB:      db,
 		client:  &http.Client{Timeout: 120 * time.Second},
 		configs: providerConfigs,
 	}
@@ -217,6 +220,18 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 				Error:    err.Error(),
 			})
 		}
+		// Log error to llm_calls table
+		if p.DB != nil {
+			reqMsgsJSON, _ := json.Marshal(req.Messages)
+			reqToolsJSON, _ := json.Marshal(req.Tools)
+			p.DB.Exec(
+				`INSERT INTO llm_calls (intent, provider, model, duration_ms, chain_id, request_system, request_messages, request_tools, error)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				req.Intent, route.ProviderName, route.Model,
+				time.Since(start).Milliseconds(), sql.NullString{String: req.ChainID, Valid: req.ChainID != ""},
+				req.System, reqMsgsJSON, reqToolsJSON, err.Error(),
+			)
+		}
 		return nil, err
 	}
 
@@ -253,6 +268,24 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 				Done:      provResp.Done,
 			},
 		})
+	}
+
+	// Log successful call to llm_calls table
+	if p.DB != nil {
+		reqMsgsJSON, _ := json.Marshal(req.Messages)
+		reqToolsJSON, _ := json.Marshal(req.Tools)
+		respToolCallsJSON, _ := json.Marshal(provResp.ToolCalls)
+		if _, dbErr := p.DB.Exec(
+			`INSERT INTO llm_calls (intent, provider, model, tokens_in, tokens_out, cost, duration_ms, chain_id, request_system, request_messages, request_tools, response_content, response_tool_calls, response_done)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			req.Intent, route.ProviderName, route.Model,
+			provResp.TokensIn, provResp.TokensOut, cost,
+			time.Since(start).Milliseconds(), sql.NullString{String: req.ChainID, Valid: req.ChainID != ""},
+			req.System, reqMsgsJSON, reqToolsJSON,
+			provResp.Content, respToolCallsJSON, provResp.Done,
+		); dbErr != nil {
+			log.Printf("[llm] failed to log call to DB: %v", dbErr)
+		}
 	}
 
 	// Get budget remaining

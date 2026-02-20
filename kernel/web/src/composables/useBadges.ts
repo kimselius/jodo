@@ -6,20 +6,17 @@ import { onWSEvent } from './useWebSocket'
 const eventToRoute: Record<string, string> = {
   chat: '/',
   memory: '/memories',
-  timeline: '/timeline',
   library: '/library',
-  inbox: '/inbox',
+  inbox: '/logs',
 }
 
 // Reactive badge counts — keyed by route path
 const badges = reactive<Record<string, number>>({
   '/': 0,
   '/memories': 0,
-  '/growth': 0,
+  '/gallas': 0,
   '/logs': 0,
-  '/timeline': 0,
   '/library': 0,
-  '/inbox': 0,
 })
 
 // Track whether the module has been initialized
@@ -40,7 +37,7 @@ function init() {
         if (currentPath !== '/logs') badges['/logs']++
       } else {
         // Galla update (from handleGallaPost)
-        if (currentPath !== '/growth') badges['/growth']++
+        if (currentPath !== '/gallas') badges['/gallas']++
       }
       return
     }

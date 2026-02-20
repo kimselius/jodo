@@ -329,13 +329,24 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 		}
 	}
 
-	// Auto-generate routing from saved models' capabilities
-	if s.ConfigStore.GetConfig("routing.intent_preferences") == "" {
-		prefs := s.buildRoutingFromModels()
-		if len(prefs) > 0 {
-			prefsJSON, _ := json.Marshal(prefs)
-			s.ConfigStore.SetConfig("routing.intent_preferences", string(prefsJSON))
+	// Ensure routing preferences are populated for all intents with available models.
+	// Merges: keeps any existing preferences from the setup wizard, fills in gaps from models.
+	builtPrefs := s.buildRoutingFromModels()
+	if len(builtPrefs) > 0 {
+		existing := make(map[string][]string)
+		if existingJSON := s.ConfigStore.GetConfig("routing.intent_preferences"); existingJSON != "" {
+			json.Unmarshal([]byte(existingJSON), &existing)
 		}
+
+		for intent, models := range builtPrefs {
+			if len(existing[intent]) == 0 {
+				existing[intent] = models
+			}
+		}
+
+		prefsJSON, _ := json.Marshal(existing)
+		s.ConfigStore.SetConfig("routing.intent_preferences", string(prefsJSON))
+		log.Printf("[setup] routing preferences: %s", string(prefsJSON))
 	}
 
 	// Mark setup complete

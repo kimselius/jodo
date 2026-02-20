@@ -43,25 +43,19 @@ const router = createRouter({
       component: () => import('@/views/LibraryView.vue'),
     },
     {
-      path: '/growth',
-      name: 'growth',
-      component: () => import('@/views/GrowthView.vue'),
+      path: '/gallas',
+      name: 'gallas',
+      component: () => import('@/views/GallasView.vue'),
     },
     {
       path: '/logs',
       name: 'logs',
-      component: () => import('@/views/LogView.vue'),
+      component: () => import('@/views/LogsView.vue'),
     },
-    {
-      path: '/inbox',
-      name: 'inbox',
-      component: () => import('@/views/InboxView.vue'),
-    },
-    {
-      path: '/timeline',
-      name: 'timeline',
-      component: () => import('@/views/TimelineView.vue'),
-    },
+    // Redirects for old bookmarks
+    { path: '/growth', redirect: '/gallas' },
+    { path: '/inbox', redirect: '/logs' },
+    { path: '/timeline', redirect: '/logs' },
   ],
 })
 

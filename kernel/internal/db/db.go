@@ -195,6 +195,27 @@ func RunMigrations(db *sql.DB) error {
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
 
+		// LLM call log (individual request/response tracking for UI)
+		`CREATE TABLE IF NOT EXISTS llm_calls (
+			id SERIAL PRIMARY KEY,
+			intent VARCHAR(50) NOT NULL,
+			provider VARCHAR(50) NOT NULL,
+			model VARCHAR(100) NOT NULL,
+			tokens_in INTEGER NOT NULL DEFAULT 0,
+			tokens_out INTEGER NOT NULL DEFAULT 0,
+			cost DECIMAL(10, 6) NOT NULL DEFAULT 0,
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			chain_id VARCHAR(100),
+			request_system TEXT,
+			request_messages JSONB DEFAULT '[]',
+			request_tools JSONB,
+			response_content TEXT,
+			response_tool_calls JSONB,
+			response_done BOOLEAN DEFAULT false,
+			error TEXT,
+			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+
 		// VRAM tracking: provider GPU capacity + per-model VRAM estimates
 		`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'providers' AND column_name = 'total_vram_bytes') THEN
@@ -254,6 +275,11 @@ func RunMigrations(db *sql.DB) error {
 		`DO $$ BEGIN
 			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'inbox_messages_created_idx') THEN
 				CREATE INDEX inbox_messages_created_idx ON inbox_messages (created_at);
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'llm_calls_created_idx') THEN
+				CREATE INDEX llm_calls_created_idx ON llm_calls (created_at DESC);
 			END IF;
 		END $$`,
 	}

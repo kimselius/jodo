@@ -1,7 +1,7 @@
 import type { ChatMessage } from '@/types/chat'
 import type { StatusResponse, BudgetResponse } from '@/types/status'
 import type { Genesis, IdentityUpdate } from '@/types/genesis'
-import type { CommitEntry } from '@/types/history'
+import type { LLMCallSummary, LLMCallDetail } from '@/types/llmcalls'
 import type { MemoryEntry } from '@/types/memory'
 import type { GrowthEvent, GallaEntry } from '@/types/growth'
 import type { LibraryItem, LibraryComment } from '@/types/library'
@@ -70,9 +70,21 @@ export const api = {
     })
   },
 
-  // History
-  getHistory() {
-    return request<{ commits: CommitEntry[] }>('/api/history')
+  // LLM Calls
+  getLLMCalls(limit = 50, offset = 0, intent?: string) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (intent) params.set('intent', intent)
+    return request<{ calls: LLMCallSummary[]; total: number }>(`/api/llm-calls?${params}`)
+  },
+
+  getLLMCallDetail(id: number) {
+    return request<LLMCallDetail>(`/api/llm-calls/${id}`)
+  },
+
+  // Memory search
+  searchMemories(query: string, limit = 10) {
+    const params = new URLSearchParams({ q: query, limit: String(limit) })
+    return request<{ results: Array<{ id: string; content: string; similarity: number; tags: string[]; created_at: string }>; cost: number }>(`/api/memories/search?${params}`)
   },
 
   // Memories

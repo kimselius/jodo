@@ -437,6 +437,10 @@ func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 					rec.Capabilities = filtered
 				}
 			}
+			// Add "plan" capability for non-embedding models (any model that can code/chat can plan)
+			if !containsStr(rec.Capabilities, "plan") && !containsStr(rec.Capabilities, "embed") && rec.Quality >= 60 {
+				rec.Capabilities = append(rec.Capabilities, "plan")
+			}
 			dm.Recommended = rec
 		}
 		models = append(models, dm)
@@ -808,10 +812,13 @@ func enrichModel(id, displayName, provider string) knownModel {
 	isEmbed := km.Tier == "embed" || containsStr(km.Capabilities, "embed") ||
 		strings.Contains(idLower, "embed")
 
-	// 4. Add "code" capability for non-embedding models with decent quality
-	if !isEmbed && !containsStr(km.Capabilities, "code") {
-		if km.Quality >= 70 {
+	// 4. Add "code" and "plan" capabilities for non-embedding models
+	if !isEmbed {
+		if km.Quality >= 70 && !containsStr(km.Capabilities, "code") {
 			km.Capabilities = append(km.Capabilities, "code")
+		}
+		if km.Quality >= 60 && !containsStr(km.Capabilities, "plan") {
+			km.Capabilities = append(km.Capabilities, "plan")
 		}
 	}
 

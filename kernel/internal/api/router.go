@@ -152,6 +152,13 @@ func (s *Server) SetupRouter() *gin.Engine {
 		// Inbox
 		ops.GET("/inbox", s.handleInboxList)
 		ops.POST("/inbox", s.handleInboxPost)
+
+		// LLM Calls
+		ops.GET("/llm-calls", s.handleLLMCallsList)
+		ops.GET("/llm-calls/:id", s.handleLLMCallDetail)
+
+		// Memory search (GET-based for UI)
+		ops.GET("/memories/search", s.handleMemoriesSearchGet)
 	}
 
 	// Reverse proxy to Jodo's app — registered on the base router (not /api)
