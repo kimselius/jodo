@@ -25,7 +25,7 @@ const isErrorSummary = computed(() => {
 const hasPlan = computed(() => {
   const p = props.galla.plan
   if (!p) return false
-  if (p === '(birth — no planning phase)' || p === '(birth — before galla tracking)') return false
+  if (p === '(birth — before galla tracking)') return false
   return true
 })
 

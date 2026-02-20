@@ -1079,50 +1079,44 @@ def live():
                 log(f"Chat: {len(chat_messages)} unread messages (up to ID {max_id})")
                 ack_chat_messages(max_id)
 
+            # Pick prompt: birth or wakeup
             if galla == 0:
-                # Birth: no planning, just execute first tasks
                 prompt = birth_prompt(genesis)
-                post_galla(plan="(birth — no planning phase)")
-                content, actions = think_and_act(
-                    messages=[{"role": "user", "content": prompt}],
-                    intent="code",
-                )
-                post_galla(summary=content or "", actions_count=len(actions))
             else:
-                # Phase 1: Plan (read + execute only — inspect, then plan)
-                set_phase("planning")
                 prompt = wakeup_prompt(genesis, inbox_messages, chat_messages)
-                plan, plan_actions = think_and_act(
-                    messages=[{"role": "user", "content": prompt + "\n\n" + PLAN_INSTRUCTIONS}],
-                    intent="plan",
-                    tools=PLAN_TOOLS,
-                )
 
-                # Detect plan phase failures
-                _PLAN_ERRORS = ["couldn't reach the kernel", "tool loop limit"]
-                plan_failed = not plan or any(e in (plan or "").lower() for e in _PLAN_ERRORS)
+            # Phase 1: Plan (read + execute only — inspect, then plan)
+            set_phase("planning")
+            plan, plan_actions = think_and_act(
+                messages=[{"role": "user", "content": prompt + "\n\n" + PLAN_INSTRUCTIONS}],
+                intent="plan",
+                tools=PLAN_TOOLS,
+            )
 
-                if plan_failed:
-                    log(f"Plan phase failed: {(plan or '(empty)')[:100]}")
-                    post_galla(plan=f"⚠ {plan}" if plan else "⚠ Planning failed")
-                    # Give the execution phase a reasonable fallback
-                    plan = "1. Check on human messages and respond if needed.\n2. Ensure my app is healthy.\n3. Make one small improvement."
-                else:
-                    log(f"Plan: {plan[:200]}")
-                    post_galla(plan=plan)
+            # Detect plan phase failures
+            _PLAN_ERRORS = ["couldn't reach the kernel", "tool loop limit"]
+            plan_failed = not plan or any(e in (plan or "").lower() for e in _PLAN_ERRORS)
 
-                # Phase 2: Execute the plan (with tools)
-                set_phase("thinking")
-                exec_messages = [
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": plan},
-                    {"role": "user", "content": "Good plan. Now execute it. Use your tools."},
-                ]
-                content, actions = think_and_act(
-                    messages=exec_messages,
-                    intent="code",
-                )
-                post_galla(summary=content or "", actions_count=len(actions))
+            if plan_failed:
+                log(f"Plan phase failed: {(plan or '(empty)')[:100]}")
+                post_galla(plan=f"⚠ {plan}" if plan else "⚠ Planning failed")
+                plan = "1. Check on human messages and respond if needed.\n2. Ensure my app is healthy.\n3. Make one small improvement."
+            else:
+                log(f"Plan: {plan[:200]}")
+                post_galla(plan=plan)
+
+            # Phase 2: Execute the plan (with tools)
+            set_phase("thinking")
+            exec_messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": plan},
+                {"role": "user", "content": "Good plan. Now execute it. Use your tools."},
+            ]
+            content, actions = think_and_act(
+                messages=exec_messages,
+                intent="code",
+            )
+            post_galla(summary=content or "", actions_count=len(actions))
 
             last_actions = actions
 
