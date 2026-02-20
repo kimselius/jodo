@@ -55,6 +55,14 @@ export function useLLMCalls() {
     }
   }
 
+  function toggleDetail(id: number) {
+    if (selectedCall.value?.id === id) {
+      selectedCall.value = null
+      return
+    }
+    loadDetail(id)
+  }
+
   function clearDetail() {
     selectedCall.value = null
   }
@@ -64,6 +72,6 @@ export function useLLMCalls() {
   return {
     calls, total, loading, error, intentFilter,
     load, loadMore, hasMore,
-    selectedCall, detailLoading, loadDetail, clearDetail,
+    selectedCall, detailLoading, loadDetail, toggleDetail, clearDetail,
   }
 }
