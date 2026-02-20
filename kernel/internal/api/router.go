@@ -79,14 +79,10 @@ func (s *Server) SetupRouter() *gin.Engine {
 		setup.GET("/status", s.handleSetupStatus)
 		setup.POST("/ssh/generate", s.handleSetupSSHGenerate)
 		setup.POST("/ssh/verify", s.handleSetupSSHVerify)
-		setup.POST("/providers", s.handleSetupProviders)
-		setup.POST("/genesis", s.handleSetupGenesis)
-		setup.POST("/test-provider", s.handleSetupTestProvider)
+		setup.POST("/step/:name", s.handleSetupSaveStep) // save config per step
 		setup.POST("/birth", s.handleSetupBirth)
-		setup.POST("/config", s.handleSetupConfig)
 		setup.POST("/provision", s.handleSetupProvision)
 		setup.POST("/discover", s.handleSetupDiscover)
-		setup.POST("/routing", s.handleSetupRouting)
 	}
 
 	// Settings endpoints — require setup complete

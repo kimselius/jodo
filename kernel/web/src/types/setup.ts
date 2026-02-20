@@ -12,11 +12,6 @@ export interface SSHVerifyResponse {
   error?: string
 }
 
-export interface TestProviderResponse {
-  valid: boolean
-  error?: string
-}
-
 export interface ProviderSetup {
   name: string
   enabled: boolean

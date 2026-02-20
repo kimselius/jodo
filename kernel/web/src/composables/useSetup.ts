@@ -142,21 +142,33 @@ export function useSetup() {
 
   async function saveCurrentStep() {
     const step = currentStep.value
-    if (step === 'kernel-url') {
-      await api.setupConfig(kernelUrl.value)
-    } else if (step === 'providers') {
-      const enabledProviders = providers.value.filter(p => p.enabled || p.name === 'ollama')
-      await api.setupProviders(enabledProviders)
-    } else if (step === 'routing') {
-      const nonEmptyRouting: Record<string, string[]> = {}
-      for (const [intent, refs] of Object.entries(routing.value)) {
-        if (refs.length > 0) nonEmptyRouting[intent] = refs
+    const data = buildStepData(step)
+    if (data) {
+      await api.setupSaveStep(step, data)
+    }
+  }
+
+  function buildStepData(step: SetupStep): Record<string, unknown> | null {
+    switch (step) {
+      case 'vps':
+        return { host: vps.host, ssh_user: vps.sshUser }
+      case 'server-setup':
+        return { brain_path: brainPath.value }
+      case 'kernel-url':
+        return { kernel_url: kernelUrl.value }
+      case 'providers':
+        return { providers: providers.value.filter(p => p.enabled || p.name === 'ollama') }
+      case 'routing': {
+        const nonEmpty: Record<string, string[]> = {}
+        for (const [intent, refs] of Object.entries(routing.value)) {
+          if (refs.length > 0) nonEmpty[intent] = refs
+        }
+        return { intent_preferences: nonEmpty }
       }
-      if (Object.keys(nonEmptyRouting).length > 0) {
-        await api.setupRouting(nonEmptyRouting)
-      }
-    } else if (step === 'genesis') {
-      await api.setupGenesis(genesis.value)
+      case 'genesis':
+        return { ...genesis.value }
+      default:
+        return null
     }
   }
 
@@ -174,8 +186,6 @@ export function useSetup() {
       if (jodoMode.value === 'docker') {
         vps.host = 'jodo'
         vps.sshUser = 'root'
-        // Docker mode: Jodo reaches kernel via Docker network, not external IP
-        kernelUrl.value = 'http://kernel:8080'
       }
     } catch {
       // Default to vps mode

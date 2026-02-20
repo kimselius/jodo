@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import Button from '@/components/ui/Button.vue'
 import ProviderCard from '@/components/shared/ProviderCard.vue'
-import { api } from '@/lib/api'
 import type { ProviderSetup } from '@/types/setup'
 
 const props = defineProps<{
@@ -13,24 +11,6 @@ defineEmits<{
   next: []
   back: []
 }>()
-
-const testing = ref<string | null>(null)
-const testResult = ref<Record<string, { valid: boolean; error?: string }>>({})
-
-async function testProvider(provider: ProviderSetup) {
-  testing.value = provider.name
-  try {
-    const res = await api.setupTestProvider(provider.name, provider.api_key, provider.base_url)
-    testResult.value[provider.name] = res
-  } catch (e) {
-    testResult.value[provider.name] = {
-      valid: false,
-      error: e instanceof Error ? e.message : 'Test failed',
-    }
-  } finally {
-    testing.value = null
-  }
-}
 
 function hasAtLeastOneModel(): boolean {
   return props.providers.some(p => p.enabled && p.models.length > 0)
@@ -75,7 +55,7 @@ function handlePreferLoadedUpdate(provider: ProviderSetup, modelKey: string, pre
     <div>
       <h2 class="text-lg font-semibold">LLM Providers</h2>
       <p class="text-sm text-muted-foreground mt-1">
-        Configure the AI models Jodo will use to think. Enable a provider, test the connection, then discover and select models.
+        Configure the AI models Jodo will use to think. Enable a provider, then discover and select models.
       </p>
     </div>
 
@@ -91,9 +71,6 @@ function handlePreferLoadedUpdate(provider: ProviderSetup, modelKey: string, pre
       v-model:total-vram-bytes="provider.total_vram_bytes"
       :enabled-models="provider.models"
       :setup-mode="true"
-      :testing="testing === provider.name"
-      :test-result="testResult[provider.name] ?? null"
-      @test="testProvider(provider)"
       @model-enable="(model) => handleModelEnable(provider, model)"
       @model-disable="(key) => handleModelDisable(provider, key)"
       @update-capabilities="(key, caps) => handleCapabilityUpdate(provider, key, caps)"

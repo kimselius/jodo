@@ -43,13 +43,9 @@ export const api = {
   getSetupStatus: setupApi.getSetupStatus,
   setupSSHGenerate: setupApi.setupSSHGenerate,
   setupSSHVerify: setupApi.setupSSHVerify,
-  setupConfig: setupApi.setupConfig,
-  setupProviders: setupApi.setupProviders,
-  setupGenesis: setupApi.setupGenesis,
-  setupTestProvider: setupApi.setupTestProvider,
+  setupSaveStep: setupApi.setupSaveStep,
   setupBirth: setupApi.setupBirth,
   setupProvision: setupApi.setupProvision,
-  setupRouting: setupApi.setupRouting,
   setupDiscoverModels: setupApi.setupDiscoverModels,
 
   // Settings

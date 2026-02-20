@@ -12,8 +12,6 @@ const emit = defineEmits<{ saved: [] }>()
 
 const saving = ref<string | null>(null)
 const error = ref<string | null>(null)
-const testing = ref<string | null>(null)
-const testResult = ref<Record<string, { valid: boolean; error?: string }>>({})
 
 // Track new API key input per provider (never pre-populated from backend)
 const newApiKey = ref<Record<string, string>>({})
@@ -39,18 +37,6 @@ async function updateProvider(p: ProviderInfo) {
     error.value = e instanceof Error ? e.message : 'Update failed'
   } finally {
     saving.value = null
-  }
-}
-
-async function testProvider(p: ProviderInfo) {
-  testing.value = p.name
-  try {
-    const res = await api.setupTestProvider(p.name, newApiKey.value[p.name] || '', p.base_url)
-    testResult.value[p.name] = res
-  } catch (e) {
-    testResult.value[p.name] = { valid: false, error: e instanceof Error ? e.message : 'Test failed' }
-  } finally {
-    testing.value = null
   }
 }
 
@@ -112,10 +98,7 @@ async function handlePreferLoadedUpdate(providerName: string, modelKey: string, 
       v-model:total-vram-bytes="p.total_vram_bytes"
       :enabled-models="enabledModelsFor(p)"
       :show-save="true"
-      :testing="testing === p.name"
       :saving="saving === p.name"
-      :test-result="testResult[p.name] ?? null"
-      @test="testProvider(p)"
       @save="updateProvider(p)"
       @model-enable="(model) => handleModelEnable(p.name, model)"
       @model-disable="(key) => handleModelDisable(p.name, key)"

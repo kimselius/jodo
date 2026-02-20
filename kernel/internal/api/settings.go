@@ -137,8 +137,8 @@ func (s *Server) handleSettingsGenesisPut(c *gin.Context) {
 		return
 	}
 
-	genesis := req.toGenesis()
-	if err := s.ConfigStore.SaveGenesis(genesis); err != nil {
+	genesis, err := s.saveGenesisConfig(req)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -163,7 +163,7 @@ func (s *Server) handleSettingsRoutingPut(c *gin.Context) {
 		return
 	}
 
-	if err := s.ConfigStore.SaveRoutingConfig(req); err != nil {
+	if err := s.saveRoutingPreferences(req.IntentPreferences); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -1,6 +1,5 @@
 import type {
   SetupStatus, SSHGenerateResponse, SSHVerifyResponse,
-  TestProviderResponse, ProviderSetup, GenesisSetup,
   ProvisionResult,
 } from '@/types/setup'
 import { request } from './request'
@@ -21,31 +20,11 @@ export const setupApi = {
     })
   },
 
-  setupConfig(kernelUrl: string) {
-    return request<{ ok: boolean }>('/api/setup/config', {
+  /** Save config for a named setup step. Called on each "Next" click. */
+  setupSaveStep(step: string, data: Record<string, unknown>) {
+    return request<{ ok: boolean }>(`/api/setup/step/${step}`, {
       method: 'POST',
-      body: JSON.stringify({ kernel_url: kernelUrl }),
-    })
-  },
-
-  setupProviders(providers: ProviderSetup[]) {
-    return request<{ ok: boolean }>('/api/setup/providers', {
-      method: 'POST',
-      body: JSON.stringify({ providers }),
-    })
-  },
-
-  setupGenesis(genesis: GenesisSetup) {
-    return request<{ ok: boolean }>('/api/setup/genesis', {
-      method: 'POST',
-      body: JSON.stringify(genesis),
-    })
-  },
-
-  setupTestProvider(provider: string, apiKey: string, baseUrl?: string) {
-    return request<TestProviderResponse>('/api/setup/test-provider', {
-      method: 'POST',
-      body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+      body: JSON.stringify(data),
     })
   },
 
@@ -57,13 +36,6 @@ export const setupApi = {
     return request<ProvisionResult>('/api/setup/provision', {
       method: 'POST',
       body: JSON.stringify({ brain_path: brainPath }),
-    })
-  },
-
-  setupRouting(intentPreferences: Record<string, string[]>) {
-    return request<{ ok: boolean }>('/api/setup/routing', {
-      method: 'POST',
-      body: JSON.stringify({ intent_preferences: intentPreferences }),
     })
   },
 

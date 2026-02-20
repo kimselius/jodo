@@ -27,21 +27,16 @@ const props = withDefaults(defineProps<{
   hasExistingKey?: boolean
   enabledModels: EnabledModel[]
   setupMode?: boolean
-  testing?: boolean
   saving?: boolean
   showSave?: boolean
-  testResult?: { valid: boolean; error?: string } | null
 }>(), {
   hasExistingKey: false,
   setupMode: false,
-  testing: false,
   saving: false,
   showSave: false,
-  testResult: null,
 })
 
 const emit = defineEmits<{
-  test: []
   save: []
   modelEnable: [model: EnabledModel]
   modelDisable: [key: string]
@@ -138,29 +133,15 @@ const reserveStr = computed({
         @update-prefer-loaded="(key, val) => emit('updatePreferLoaded', key, val)"
       />
 
-      <!-- Test + Save buttons -->
-      <div class="flex items-center gap-3">
+      <!-- Save button -->
+      <div v-if="showSave" class="flex justify-end">
         <Button
           size="sm"
-          variant="secondary"
-          @click="emit('test')"
-          :disabled="testing"
+          @click="emit('save')"
+          :disabled="saving"
         >
-          {{ testing ? 'Testing...' : 'Test Connection' }}
+          {{ saving ? 'Saving...' : 'Save' }}
         </Button>
-        <span v-if="testResult?.valid" class="text-xs text-green-500">Connected</span>
-        <span v-else-if="testResult?.error" class="text-xs text-destructive">{{ testResult.error }}</span>
-
-        <template v-if="showSave">
-          <div class="flex-1" />
-          <Button
-            size="sm"
-            @click="emit('save')"
-            :disabled="saving"
-          >
-            {{ saving ? 'Saving...' : 'Save' }}
-          </Button>
-        </template>
       </div>
     </template>
   </Card>

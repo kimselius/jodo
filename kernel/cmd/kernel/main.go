@@ -121,8 +121,14 @@ func initSubsystems(database *sql.DB, dbCfg config.DatabaseConfig, configStore *
 
 	kernelURL := cfg.Kernel.ExternalURL
 	if kernelURL == "" {
-		kernelURL = fmt.Sprintf("http://localhost:%d", cfg.Kernel.Port)
-		log.Printf("[boot] WARNING: kernel.external_url not set — using %s", kernelURL)
+		if envOr("JODO_MODE", "vps") == "docker" {
+			// Docker mode: kernel URL is always the Docker service name (not user-configurable)
+			kernelURL = fmt.Sprintf("http://kernel:%d", cfg.Kernel.Port)
+			log.Printf("[boot] Docker mode — kernel URL: %s", kernelURL)
+		} else {
+			kernelURL = fmt.Sprintf("http://localhost:%d", cfg.Kernel.Port)
+			log.Printf("[boot] WARNING: kernel.external_url not set — using %s", kernelURL)
+		}
 	}
 
 	sshKeyPath, err := writeSSHKeyToTemp(configStore)

@@ -110,57 +110,107 @@ func (s *Server) handleSetupSSHVerify(c *gin.Context) {
 		return
 	}
 
-	// Save VPS config
-	s.ConfigStore.SetConfig("jodo.host", req.Host)
-	s.ConfigStore.SetConfig("jodo.ssh_user", req.SSHUser)
-
 	log.Printf("[setup] SSH verified: %s@%s", req.SSHUser, req.Host)
 	c.JSON(http.StatusOK, gin.H{
 		"connected": true,
 	})
 }
 
-// POST /api/setup/config — save kernel URL and other config
-func (s *Server) handleSetupConfig(c *gin.Context) {
-	var req struct {
-		KernelURL string `json:"kernel_url"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
+// POST /api/setup/step/:name — save config for a setup step.
+// Each step saves via one HTTP call when the user clicks "Next".
+func (s *Server) handleSetupSaveStep(c *gin.Context) {
+	name := c.Param("name")
 
-	if req.KernelURL != "" {
-		s.ConfigStore.SetConfig("kernel.external_url", req.KernelURL)
-	}
-
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// POST /api/setup/providers — save provider configurations
-func (s *Server) handleSetupProviders(c *gin.Context) {
-	var req struct {
-		Providers []providerSetupReq `json:"providers"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	for _, p := range req.Providers {
-		if err := s.ConfigStore.SaveProvider(p.Name, p.Enabled, p.APIKey, p.BaseURL, p.MonthlyBudget, p.EmergencyReserve, p.TotalVRAMBytes); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save provider %s: %v", p.Name, err)})
+	switch name {
+	case "vps":
+		var req struct {
+			Host    string `json:"host"`
+			SSHUser string `json:"ssh_user"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 			return
 		}
-		for _, m := range p.Models {
-			if err := s.ConfigStore.SaveModel(p.Name, m.ModelKey, m.ModelName, m.InputCostPer1M, m.OutputCostPer1M, m.Capabilities, m.Quality, m.VRAMEstimateBytes, m.SupportsTools, m.PreferLoaded); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save model %s/%s: %v", p.Name, m.ModelKey, err)})
+		if err := s.saveConnectionConfig(req.Host, req.SSHUser); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+	case "server-setup":
+		var req struct {
+			BrainPath string `json:"brain_path"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if req.BrainPath == "" {
+			req.BrainPath = "/opt/jodo/brain"
+		}
+		if err := s.ConfigStore.SetConfig("jodo.brain_path", req.BrainPath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		log.Printf("[setup] brain path saved: %s", req.BrainPath)
+
+	case "kernel-url":
+		var req struct {
+			KernelURL string `json:"kernel_url"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if req.KernelURL != "" {
+			if err := s.ConfigStore.SetConfig("kernel.external_url", req.KernelURL); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			log.Printf("[setup] kernel URL saved: %s", req.KernelURL)
 		}
+
+	case "providers":
+		var req struct {
+			Providers []providerSetupReq `json:"providers"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if err := s.saveProvidersBulk(req.Providers); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+	case "routing":
+		var req struct {
+			IntentPreferences map[string][]string `json:"intent_preferences"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if err := s.saveRoutingPreferences(req.IntentPreferences); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+	case "genesis":
+		var req genesisSetupReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if _, err := s.saveGenesisConfig(req); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown setup step: %s", name)})
+		return
 	}
 
-	log.Printf("[setup] saved %d providers", len(req.Providers))
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -185,24 +235,6 @@ type modelSetupReq struct {
 	VRAMEstimateBytes int64    `json:"vram_estimate_bytes"`
 	SupportsTools     *bool    `json:"supports_tools"`
 	PreferLoaded      bool     `json:"prefer_loaded"`
-}
-
-// POST /api/setup/genesis — save genesis config
-func (s *Server) handleSetupGenesis(c *gin.Context) {
-	var req genesisSetupReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	genesis := req.toGenesis()
-	if err := s.ConfigStore.SaveGenesis(genesis); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save genesis: %v", err)})
-		return
-	}
-
-	log.Printf("[setup] genesis saved: %s", genesis.Identity.Name)
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 type genesisSetupReq struct {
@@ -231,79 +263,6 @@ func (r *genesisSetupReq) toGenesis() *config.Genesis {
 	return g
 }
 
-// POST /api/setup/test-provider — test an API key
-func (s *Server) handleSetupTestProvider(c *gin.Context) {
-	var req struct {
-		Provider string `json:"provider"`
-		APIKey   string `json:"api_key"`
-		BaseURL  string `json:"base_url"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	switch req.Provider {
-	case "ollama":
-		url := req.BaseURL
-		if url == "" {
-			url = "http://host.docker.internal:11434"
-		}
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(url + "/api/tags")
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": fmt.Sprintf("Cannot reach Ollama at %s: %v", url, err)})
-			return
-		}
-		resp.Body.Close()
-		c.JSON(http.StatusOK, gin.H{"valid": resp.StatusCode == 200})
-
-	case "claude":
-		if req.APIKey == "" {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": "API key is required"})
-			return
-		}
-		client := &http.Client{Timeout: 10 * time.Second}
-		httpReq, _ := http.NewRequest("GET", "https://api.anthropic.com/v1/models", nil)
-		httpReq.Header.Set("x-api-key", req.APIKey)
-		httpReq.Header.Set("anthropic-version", "2023-06-01")
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": fmt.Sprintf("API request failed: %v", err)})
-			return
-		}
-		resp.Body.Close()
-		if resp.StatusCode == 200 {
-			c.JSON(http.StatusOK, gin.H{"valid": true})
-		} else {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": fmt.Sprintf("API returned status %d", resp.StatusCode)})
-		}
-
-	case "openai":
-		if req.APIKey == "" {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": "API key is required"})
-			return
-		}
-		client := &http.Client{Timeout: 10 * time.Second}
-		httpReq, _ := http.NewRequest("GET", "https://api.openai.com/v1/models", nil)
-		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": fmt.Sprintf("API request failed: %v", err)})
-			return
-		}
-		resp.Body.Close()
-		if resp.StatusCode == 200 {
-			c.JSON(http.StatusOK, gin.H{"valid": true})
-		} else {
-			c.JSON(http.StatusOK, gin.H{"valid": false, "error": fmt.Sprintf("API returned status %d", resp.StatusCode)})
-		}
-
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown provider"})
-	}
-}
-
 // POST /api/setup/birth — mark setup complete and birth Jodo
 func (s *Server) handleSetupBirth(c *gin.Context) {
 	if s.SetupComplete {
@@ -311,7 +270,7 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 		return
 	}
 
-	// Set defaults for any missing config
+	// Set system defaults (not user-configurable in wizard — user data saved per-step)
 	defaults := map[string]string{
 		"kernel.port":                  "8080",
 		"kernel.health_check_interval": "10",
@@ -319,7 +278,6 @@ func (s *Server) handleSetupBirth(c *gin.Context) {
 		"kernel.audit_log_path":        "/var/log/jodo-audit.jsonl",
 		"jodo.port":                    "9001",
 		"jodo.app_port":                "9000",
-		"jodo.brain_path":              "/opt/jodo/brain",
 		"jodo.health_endpoint":         "/health",
 	}
 	for k, v := range defaults {
@@ -378,10 +336,7 @@ func (s *Server) handleSetupProvision(c *gin.Context) {
 		req.BrainPath = "/opt/jodo/brain"
 	}
 
-	// Save brain path to DB
-	s.ConfigStore.SetConfig("jodo.brain_path", req.BrainPath)
-
-	// Get SSH credentials
+	// Get SSH credentials (saved by step/vps on the previous Next click)
 	host := s.ConfigStore.GetConfig("jodo.host")
 	sshUser := s.ConfigStore.GetConfig("jodo.ssh_user")
 	if host == "" || sshUser == "" {
@@ -453,28 +408,6 @@ func (s *Server) handleSetupProvision(c *gin.Context) {
 
 	log.Printf("[setup] provision %s@%s brain=%s success=%v", sshUser, host, req.BrainPath, allOk)
 	c.JSON(http.StatusOK, gin.H{"success": allOk, "steps": results})
-}
-
-// POST /api/setup/routing — save routing preferences during setup
-func (s *Server) handleSetupRouting(c *gin.Context) {
-	var req struct {
-		IntentPreferences map[string][]string `json:"intent_preferences"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-		return
-	}
-
-	if len(req.IntentPreferences) > 0 {
-		prefsJSON, _ := json.Marshal(req.IntentPreferences)
-		if err := s.ConfigStore.SetConfig("routing.intent_preferences", string(prefsJSON)); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save routing"})
-			return
-		}
-	}
-
-	log.Printf("[setup] routing preferences saved (%d intents)", len(req.IntentPreferences))
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // buildRoutingFromModels queries saved models and builds intent_preferences
