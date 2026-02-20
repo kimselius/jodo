@@ -103,7 +103,7 @@ func (s *Server) handleSettingsModelAdd(c *gin.Context) {
 		return
 	}
 
-	if err := s.ConfigStore.SaveModel(name, req.ModelKey, req.ModelName, req.InputCostPer1M, req.OutputCostPer1M, req.Capabilities, req.Quality, req.VRAMEstimateBytes, req.SupportsTools); err != nil {
+	if err := s.ConfigStore.SaveModel(name, req.ModelKey, req.ModelName, req.InputCostPer1M, req.OutputCostPer1M, req.Capabilities, req.Quality, req.VRAMEstimateBytes, req.SupportsTools, req.PreferLoaded); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -473,6 +473,7 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 		Enabled           *bool    `json:"enabled"`
 		VRAMEstimateBytes *int64   `json:"vram_estimate_bytes"`
 		SupportsTools     *bool    `json:"supports_tools"`
+		PreferLoaded      *bool    `json:"prefer_loaded"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -488,7 +489,7 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 	}
 
 	// If updating other fields, we need to load current values and merge
-	if req.ModelName != nil || req.InputCostPer1M != nil || req.OutputCostPer1M != nil || req.Capabilities != nil || req.Quality != nil || req.VRAMEstimateBytes != nil || req.SupportsTools != nil {
+	if req.ModelName != nil || req.InputCostPer1M != nil || req.OutputCostPer1M != nil || req.Capabilities != nil || req.Quality != nil || req.VRAMEstimateBytes != nil || req.SupportsTools != nil || req.PreferLoaded != nil {
 		current, err := s.ConfigStore.GetModel(name, key)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
@@ -522,7 +523,11 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 		if req.SupportsTools != nil {
 			supTools = req.SupportsTools
 		}
-		if err := s.ConfigStore.SaveModel(name, key, mn, ic, oc, caps, q, vramEst, supTools); err != nil {
+		prefLoaded := current.PreferLoaded
+		if req.PreferLoaded != nil {
+			prefLoaded = *req.PreferLoaded
+		}
+		if err := s.ConfigStore.SaveModel(name, key, mn, ic, oc, caps, q, vramEst, supTools, prefLoaded); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

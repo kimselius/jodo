@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import Card from '@/components/ui/Card.vue'
-import Input from '@/components/ui/Input.vue'
 import Button from '@/components/ui/Button.vue'
-import ModelDiscovery from '@/components/settings/ModelDiscovery.vue'
+import ProviderCard from '@/components/shared/ProviderCard.vue'
 import { api } from '@/lib/api'
 import type { ProviderSetup } from '@/types/setup'
 
@@ -41,7 +39,12 @@ function hasAtLeastOneModel(): boolean {
 function handleModelEnable(provider: ProviderSetup, model: { model_key: string; model_name: string; input_cost_per_1m: number; output_cost_per_1m: number; capabilities: string[]; quality: number }) {
   const exists = provider.models.find(m => m.model_key === model.model_key)
   if (!exists) {
-    provider.models.push({ ...model })
+    provider.models.push({
+      ...model,
+      vram_estimate_bytes: 0,
+      supports_tools: null,
+      prefer_loaded: false,
+    })
   }
 }
 
@@ -58,6 +61,13 @@ function handleCapabilityUpdate(provider: ProviderSetup, modelKey: string, capab
     model.capabilities = capabilities
   }
 }
+
+function handlePreferLoadedUpdate(provider: ProviderSetup, modelKey: string, preferLoaded: boolean) {
+  const model = provider.models.find(m => m.model_key === modelKey)
+  if (model) {
+    model.prefer_loaded = preferLoaded
+  }
+}
 </script>
 
 <template>
@@ -69,94 +79,26 @@ function handleCapabilityUpdate(provider: ProviderSetup, modelKey: string, capab
       </p>
     </div>
 
-    <Card v-for="provider in providers" :key="provider.name" class="p-4 space-y-4">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <h3 class="text-sm font-semibold capitalize">{{ provider.name }}</h3>
-          <span v-if="provider.name === 'ollama'" class="text-[10px] uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Free</span>
-        </div>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            v-model="provider.enabled"
-            class="rounded border-input"
-          />
-          <span class="text-xs text-muted-foreground">Enabled</span>
-        </label>
-      </div>
-
-      <template v-if="provider.enabled">
-        <!-- Ollama: base URL + VRAM -->
-        <div v-if="provider.name === 'ollama'" class="space-y-4">
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">Base URL</label>
-            <Input v-model="provider.base_url" placeholder="http://host.docker.internal:11434" />
-            <p class="text-xs text-muted-foreground mt-1">
-              If Ollama runs on the same machine, use <code>http://host.docker.internal:11434</code>
-            </p>
-          </div>
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">Total GPU VRAM (GB)</label>
-            <Input
-              :model-value="provider.total_vram_bytes ? String(Math.round(provider.total_vram_bytes / 1073741824)) : ''"
-              @update:model-value="(v?: string) => provider.total_vram_bytes = Number(v || 0) * 1073741824"
-              type="number"
-              placeholder="e.g. 48"
-              step="1"
-            />
-            <p class="text-xs text-muted-foreground mt-1">
-              Total VRAM across all GPUs. Used to prevent loading models that don't fit. Leave empty to disable VRAM tracking.
-            </p>
-          </div>
-        </div>
-
-        <!-- Claude/OpenAI: API key + budget -->
-        <template v-else>
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">API Key</label>
-            <Input v-model="provider.api_key" type="password" placeholder="sk-..." />
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="text-sm font-medium mb-1.5 block">Monthly Budget ($)</label>
-              <Input v-model.number="provider.monthly_budget" type="number" step="1" />
-            </div>
-            <div>
-              <label class="text-sm font-medium mb-1.5 block">Emergency Reserve ($)</label>
-              <Input v-model.number="provider.emergency_reserve" type="number" step="0.5" />
-            </div>
-          </div>
-        </template>
-
-        <!-- Test button -->
-        <div class="flex items-center gap-3">
-          <Button
-            size="sm"
-            variant="secondary"
-            @click="testProvider(provider)"
-            :disabled="testing === provider.name"
-          >
-            {{ testing === provider.name ? 'Testing...' : 'Test Connection' }}
-          </Button>
-          <span v-if="testResult[provider.name]?.valid" class="text-xs text-green-500">Connected</span>
-          <span v-else-if="testResult[provider.name]?.error" class="text-xs text-destructive">
-            {{ testResult[provider.name].error }}
-          </span>
-        </div>
-
-        <!-- Model Discovery -->
-        <ModelDiscovery
-          :provider-name="provider.name"
-          :enabled-models="provider.models"
-          :setup-mode="true"
-          :base-url="provider.base_url"
-          :api-key="provider.api_key"
-          @enable="(model) => handleModelEnable(provider, model)"
-          @disable="(key) => handleModelDisable(provider, key)"
-          @update-capabilities="(key, caps) => handleCapabilityUpdate(provider, key, caps)"
-        />
-      </template>
-    </Card>
+    <ProviderCard
+      v-for="provider in providers"
+      :key="provider.name"
+      :name="provider.name"
+      v-model:enabled="provider.enabled"
+      v-model:base-url="provider.base_url"
+      v-model:api-key-value="provider.api_key"
+      v-model:monthly-budget="provider.monthly_budget"
+      v-model:emergency-reserve="provider.emergency_reserve"
+      v-model:total-vram-bytes="provider.total_vram_bytes"
+      :enabled-models="provider.models"
+      :setup-mode="true"
+      :testing="testing === provider.name"
+      :test-result="testResult[provider.name] ?? null"
+      @test="testProvider(provider)"
+      @model-enable="(model) => handleModelEnable(provider, model)"
+      @model-disable="(key) => handleModelDisable(provider, key)"
+      @update-capabilities="(key, caps) => handleCapabilityUpdate(provider, key, caps)"
+      @update-prefer-loaded="(key, val) => handlePreferLoadedUpdate(provider, key, val)"
+    />
 
     <div class="flex justify-between pt-4">
       <Button variant="ghost" @click="$emit('back')">Back</Button>

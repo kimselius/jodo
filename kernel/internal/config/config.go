@@ -60,6 +60,7 @@ type ModelConfig struct {
 	Quality               int      `yaml:"quality"`
 	VRAMEstimateBytes     int64    `yaml:"vram_estimate_bytes"` // approx VRAM when loaded
 	SupportsTools         *bool    `yaml:"supports_tools"`      // nil = unknown
+	PreferLoaded          bool     `yaml:"prefer_loaded"`       // use this model if already in VRAM
 }
 
 // ModelName returns the actual model identifier to send to the provider API.

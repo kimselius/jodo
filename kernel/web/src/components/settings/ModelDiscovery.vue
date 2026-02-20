@@ -11,6 +11,7 @@ interface EnabledModel {
   output_cost_per_1m: number
   capabilities: string[]
   quality: number
+  prefer_loaded?: boolean
 }
 
 interface DiscoveredModel {
@@ -59,6 +60,7 @@ const emit = defineEmits<{
   enable: [model: EnabledModel]
   disable: [modelKey: string]
   updateCapabilities: [modelKey: string, capabilities: string[]]
+  updatePreferLoaded: [modelKey: string, preferLoaded: boolean]
 }>()
 
 const discovering = ref(false)
@@ -292,7 +294,7 @@ function tierBadgeVariant(tier: string): string {
             </div>
 
             <!-- Capability chips (editable when model is enabled) -->
-            <div v-if="isEnabled(model)" class="flex flex-wrap gap-1.5 mt-2 ml-8" @click.stop>
+            <div v-if="isEnabled(model)" class="flex flex-wrap items-center gap-1.5 mt-2 ml-8" @click.stop>
               <button
                 v-for="cap in ALL_CAPABILITIES"
                 :key="cap"
@@ -304,6 +306,15 @@ function tierBadgeVariant(tier: string): string {
               >
                 {{ cap }}
               </button>
+              <label v-if="isOllama" class="flex items-center gap-1 ml-2 cursor-pointer" :title="'When checked, this model is preferred if already loaded in VRAM'">
+                <input
+                  type="checkbox"
+                  :checked="getEnabledModel(getModelKey(model))?.prefer_loaded ?? false"
+                  class="rounded border-input"
+                  @change="emit('updatePreferLoaded', getModelKey(model), ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="text-[10px] text-muted-foreground">use if loaded</span>
+              </label>
             </div>
           </div>
         </div>
@@ -322,7 +333,7 @@ function tierBadgeVariant(tier: string): string {
           <span class="text-sm font-mono text-foreground">{{ m.model_key }}</span>
           <span class="text-[10px] text-muted-foreground">q{{ m.quality }}</span>
         </div>
-        <div class="flex flex-wrap gap-1.5 mt-1.5">
+        <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
           <button
             v-for="cap in ALL_CAPABILITIES"
             :key="cap"
@@ -334,6 +345,15 @@ function tierBadgeVariant(tier: string): string {
           >
             {{ cap }}
           </button>
+          <label v-if="isOllama" class="flex items-center gap-1 ml-2 cursor-pointer" :title="'When checked, this model is preferred if already loaded in VRAM'">
+            <input
+              type="checkbox"
+              :checked="m.prefer_loaded ?? false"
+              class="rounded border-input"
+              @change="emit('updatePreferLoaded', m.model_key, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="text-[10px] text-muted-foreground">use if loaded</span>
+          </label>
         </div>
       </div>
     </div>

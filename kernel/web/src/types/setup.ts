@@ -37,6 +37,7 @@ export interface ModelSetup {
   quality: number
   vram_estimate_bytes: number
   supports_tools: boolean | null
+  prefer_loaded: boolean
 }
 
 export interface GenesisSetup {
@@ -70,6 +71,7 @@ export interface ModelInfo {
   enabled: boolean
   vram_estimate_bytes: number
   supports_tools: boolean | null
+  prefer_loaded: boolean
 }
 
 export interface SSHStatus {

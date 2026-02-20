@@ -153,7 +153,7 @@ func (s *Server) handleSetupProviders(c *gin.Context) {
 			return
 		}
 		for _, m := range p.Models {
-			if err := s.ConfigStore.SaveModel(p.Name, m.ModelKey, m.ModelName, m.InputCostPer1M, m.OutputCostPer1M, m.Capabilities, m.Quality, m.VRAMEstimateBytes, m.SupportsTools); err != nil {
+			if err := s.ConfigStore.SaveModel(p.Name, m.ModelKey, m.ModelName, m.InputCostPer1M, m.OutputCostPer1M, m.Capabilities, m.Quality, m.VRAMEstimateBytes, m.SupportsTools, m.PreferLoaded); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save model %s/%s: %v", p.Name, m.ModelKey, err)})
 				return
 			}
@@ -184,6 +184,7 @@ type modelSetupReq struct {
 	Quality           int      `json:"quality"`
 	VRAMEstimateBytes int64    `json:"vram_estimate_bytes"`
 	SupportsTools     *bool    `json:"supports_tools"`
+	PreferLoaded      bool     `json:"prefer_loaded"`
 }
 
 // POST /api/setup/genesis — save genesis config

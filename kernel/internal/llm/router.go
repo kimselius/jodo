@@ -38,6 +38,10 @@ func NewRouter(providers map[string]Provider, configs map[string]config.Provider
 
 // Route picks the best provider for the given intent, budget, and tool requirements.
 // Supports both "model@provider" references and legacy "provider" references.
+//
+// When a VRAMTracker is active, Route does two passes:
+//  1. Try only Ollama models marked "prefer_loaded" that are already in VRAM
+//  2. Normal pass — try all preferences in order (including cold Ollama models and cloud)
 func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteResult, error) {
 	preferences, ok := r.routing.IntentPreferences[intent]
 	if !ok {
@@ -47,11 +51,34 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 		}
 	}
 
+	// Pass 1: prefer already-loaded Ollama models marked prefer_loaded (avoids loading latency)
+	if r.vram != nil {
+		if result := r.tryRoute(preferences, intent, maxTokens, needsTools, true); result != nil {
+			return result, nil
+		}
+	}
+
+	// Pass 2: normal routing — all candidates
+	if result := r.tryRoute(preferences, intent, maxTokens, needsTools, false); result != nil {
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("no affordable provider available for intent %q", intent)
+}
+
+// tryRoute iterates preferences and returns the first viable route.
+// If onlyLoaded is true, only considers Ollama models marked PreferLoaded that are in VRAM.
+func (r *Router) tryRoute(preferences []string, intent string, maxTokens int, needsTools bool, onlyLoaded bool) *RouteResult {
 	for _, ref := range preferences {
 		modelKey, provName, isModelRef := config.ParseModelRef(ref)
 
 		provider, ok := r.providers[provName]
 		if !ok {
+			continue
+		}
+
+		// In loaded-only pass, skip non-Ollama providers
+		if onlyLoaded && provName != "ollama" {
 			continue
 		}
 
@@ -96,10 +123,21 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 			continue
 		}
 
-		// VRAM check for Ollama — skip if model won't fit in GPU memory
+		// VRAM check for Ollama
 		if r.vram != nil && provName == "ollama" {
-			if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
-				continue
+			if onlyLoaded {
+				// Pass 1: only use models marked prefer_loaded that are in VRAM
+				if !mc.PreferLoaded {
+					continue
+				}
+				if !r.vram.IsLoaded(mc.ModelName(mk)) {
+					continue
+				}
+			} else {
+				// Pass 2: check if model would fit
+				if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+					continue
+				}
 			}
 		}
 
@@ -115,19 +153,36 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 			Model:        mc.ModelName(mk),
 			ModelKey:     mk,
 			ModelConfig:  mc,
-		}, nil
+		}
 	}
 
-	return nil, fmt.Errorf("no affordable provider available for intent %q", intent)
+	return nil
 }
 
 // RouteEmbed picks a provider that supports embeddings.
+// Like Route(), prefers already-loaded Ollama models to avoid swaps.
 func (r *Router) RouteEmbed() (*RouteResult, error) {
 	preferences, ok := r.routing.IntentPreferences["embed"]
 	if !ok {
 		preferences = []string{"ollama", "openai"}
 	}
 
+	// Pass 1: prefer already-loaded Ollama embed models
+	if r.vram != nil {
+		if result := r.tryRouteEmbed(preferences, true); result != nil {
+			return result, nil
+		}
+	}
+
+	// Pass 2: normal routing
+	if result := r.tryRouteEmbed(preferences, false); result != nil {
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("no provider available for embeddings")
+}
+
+func (r *Router) tryRouteEmbed(preferences []string, onlyLoaded bool) *RouteResult {
 	for _, ref := range preferences {
 		modelKey, provName, isModelRef := config.ParseModelRef(ref)
 
@@ -136,17 +191,23 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 			continue
 		}
 
+		if onlyLoaded && provName != "ollama" {
+			continue
+		}
+
 		provCfg := r.configs[provName]
 
 		if isModelRef {
-			// Direct model@provider reference
 			mc, found := provCfg.Models[modelKey]
 			if !found || !hasCapability(mc.Capabilities, "embed") {
 				continue
 			}
-			// VRAM check for Ollama
 			if r.vram != nil && provName == "ollama" {
-				if !r.vram.CanFit(mc.ModelName(modelKey), mc.VRAMEstimateBytes) {
+				if onlyLoaded {
+					if !mc.PreferLoaded || !r.vram.IsLoaded(mc.ModelName(modelKey)) {
+						continue
+					}
+				} else if !r.vram.CanFit(mc.ModelName(modelKey), mc.VRAMEstimateBytes) {
 					continue
 				}
 			}
@@ -158,17 +219,19 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 					Model:        mc.ModelName(modelKey),
 					ModelKey:     modelKey,
 					ModelConfig:  mc,
-				}, nil
+				}
 			}
 		} else {
-			// Legacy: iterate models
 			for mk, mc := range provCfg.Models {
 				if !hasCapability(mc.Capabilities, "embed") {
 					continue
 				}
-				// VRAM check for Ollama
 				if r.vram != nil && provName == "ollama" {
-					if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+					if onlyLoaded {
+						if !mc.PreferLoaded || !r.vram.IsLoaded(mc.ModelName(mk)) {
+							continue
+						}
+					} else if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
 						continue
 					}
 				}
@@ -180,13 +243,13 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 						Model:        mc.ModelName(mk),
 						ModelKey:     mk,
 						ModelConfig:  mc,
-					}, nil
+					}
 				}
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("no provider available for embeddings")
+	return nil
 }
 
 // bestModelForIntent finds the highest-quality model that supports the given intent.

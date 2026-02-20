@@ -117,13 +117,13 @@ func (s *DBStore) SaveProvider(name string, enabled bool, apiKey, baseURL string
 }
 
 // SaveModel stores a model config for a provider.
-func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inputCost, outputCost float64, capabilities []string, quality int, vramEstimateBytes int64, supportsTools *bool) error {
+func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inputCost, outputCost float64, capabilities []string, quality int, vramEstimateBytes int64, supportsTools *bool, preferLoaded bool) error {
 	_, err := s.db.Exec(
-		`INSERT INTO provider_models (provider_name, model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO provider_models (provider_name, model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools, prefer_loaded)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (provider_name, model_key) DO UPDATE SET
-		   model_name = $3, input_cost_per_1m = $4, output_cost_per_1m = $5, capabilities = $6, quality = $7, vram_estimate_bytes = $8, supports_tools = $9`,
-		providerName, modelKey, modelName, inputCost, outputCost, pq.Array(capabilities), quality, vramEstimateBytes, supportsTools,
+		   model_name = $3, input_cost_per_1m = $4, output_cost_per_1m = $5, capabilities = $6, quality = $7, vram_estimate_bytes = $8, supports_tools = $9, prefer_loaded = $10`,
+		providerName, modelKey, modelName, inputCost, outputCost, pq.Array(capabilities), quality, vramEstimateBytes, supportsTools, preferLoaded,
 	)
 	return err
 }
@@ -132,10 +132,10 @@ func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inp
 func (s *DBStore) GetModel(providerName, modelKey string) (*ModelInfo, error) {
 	var m ModelInfo
 	err := s.db.QueryRow(
-		`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools
+		`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools, prefer_loaded
 		 FROM provider_models WHERE provider_name = $1 AND model_key = $2`,
 		providerName, modelKey,
-	).Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools)
+	).Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools, &m.PreferLoaded)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 
 		// Load models for this provider
 		modelRows, err := s.db.Query(
-			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools
+			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools, prefer_loaded
 			 FROM provider_models WHERE provider_name = $1 AND enabled = true`, name,
 		)
 		if err != nil {
@@ -322,7 +322,8 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 			var q int
 			var vramEst int64
 			var supTools *bool
-			if err := modelRows.Scan(&mk, &mn, &ic, &oc, pq.Array(&caps), &q, &vramEst, &supTools); err != nil {
+			var prefLoaded bool
+			if err := modelRows.Scan(&mk, &mn, &ic, &oc, pq.Array(&caps), &q, &vramEst, &supTools, &prefLoaded); err != nil {
 				modelRows.Close()
 				return nil, fmt.Errorf("scan model: %w", err)
 			}
@@ -334,6 +335,7 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 				Quality:               q,
 				VRAMEstimateBytes:     vramEst,
 				SupportsTools:         supTools,
+				PreferLoaded:          prefLoaded,
 			}
 		}
 		modelRows.Close()
@@ -382,6 +384,7 @@ type ModelInfo struct {
 	Enabled            bool     `json:"enabled"`
 	VRAMEstimateBytes  int64    `json:"vram_estimate_bytes"`
 	SupportsTools      *bool    `json:"supports_tools"`
+	PreferLoaded       bool     `json:"prefer_loaded"`
 }
 
 // ListProviders returns all providers with their models (API keys masked).
@@ -403,7 +406,7 @@ func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
 
 		// Load models
 		modelRows, err := s.db.Query(
-			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools
+			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools, prefer_loaded
 			 FROM provider_models WHERE provider_name = $1 ORDER BY model_key`, p.Name,
 		)
 		if err != nil {
@@ -411,7 +414,7 @@ func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
 		}
 		for modelRows.Next() {
 			var m ModelInfo
-			if err := modelRows.Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools); err != nil {
+			if err := modelRows.Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools, &m.PreferLoaded); err != nil {
 				modelRows.Close()
 				return nil, err
 			}

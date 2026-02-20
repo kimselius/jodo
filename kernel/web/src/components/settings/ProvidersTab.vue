@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import Card from '@/components/ui/Card.vue'
-import Input from '@/components/ui/Input.vue'
-import Button from '@/components/ui/Button.vue'
-import ModelDiscovery from './ModelDiscovery.vue'
+import ProviderCard from '@/components/shared/ProviderCard.vue'
 import { api } from '@/lib/api'
 import type { ProviderInfo } from '@/types/setup'
 
@@ -18,7 +15,7 @@ const error = ref<string | null>(null)
 const testing = ref<string | null>(null)
 const testResult = ref<Record<string, { valid: boolean; error?: string }>>({})
 
-// Track new API key input per provider (separate from display)
+// Track new API key input per provider (never pre-populated from backend)
 const newApiKey = ref<Record<string, string>>({})
 
 async function updateProvider(p: ProviderInfo) {
@@ -87,99 +84,43 @@ async function handleCapabilityUpdate(providerName: string, modelKey: string, ca
     error.value = e instanceof Error ? e.message : 'Failed to update capabilities'
   }
 }
+
+async function handlePreferLoadedUpdate(providerName: string, modelKey: string, preferLoaded: boolean) {
+  try {
+    await api.updateModel(providerName, modelKey, { prefer_loaded: preferLoaded })
+    emit('saved')
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to update prefer loaded'
+  }
+}
 </script>
 
 <template>
   <div class="space-y-4">
     <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
 
-    <Card v-for="p in providers" :key="p.name" class="p-4 space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-semibold capitalize">{{ p.name }}</h3>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" v-model="p.enabled" class="rounded border-input" />
-          <span class="text-xs text-muted-foreground">Enabled</span>
-        </label>
-      </div>
-
-      <template v-if="p.enabled">
-        <div v-if="p.name === 'ollama'" class="space-y-4">
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">Base URL</label>
-            <Input v-model="p.base_url" />
-          </div>
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">Total GPU VRAM (GB)</label>
-            <Input
-              :model-value="p.total_vram_bytes ? String(Math.round(p.total_vram_bytes / 1073741824)) : ''"
-              @update:model-value="(v?: string) => p.total_vram_bytes = Number(v || 0) * 1073741824"
-              type="number"
-              placeholder="e.g. 48"
-              step="1"
-            />
-            <p class="text-xs text-muted-foreground mt-1">
-              Total VRAM across all GPUs. Used to prevent loading models that don't fit. Leave empty to disable.
-            </p>
-          </div>
-        </div>
-
-        <template v-else>
-          <div>
-            <label class="text-sm font-medium mb-1.5 block">
-              API Key
-              <span v-if="p.has_api_key" class="text-xs text-muted-foreground font-normal ml-1">(configured)</span>
-            </label>
-            <Input
-              v-model="newApiKey[p.name]"
-              type="password"
-              :placeholder="p.has_api_key ? 'Enter new key to change' : 'sk-...'"
-            />
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="text-sm font-medium mb-1.5 block">Monthly Budget ($)</label>
-              <Input v-model.number="p.monthly_budget" type="number" step="1" />
-            </div>
-            <div>
-              <label class="text-sm font-medium mb-1.5 block">Emergency Reserve ($)</label>
-              <Input v-model.number="p.emergency_reserve" type="number" step="0.5" />
-            </div>
-          </div>
-        </template>
-
-        <!-- Model Discovery -->
-        <ModelDiscovery
-          :provider-name="p.name"
-          :enabled-models="enabledModelsFor(p)"
-          @enable="(model) => handleModelEnable(p.name, model)"
-          @disable="(key) => handleModelDisable(p.name, key)"
-          @update-capabilities="(key, caps) => handleCapabilityUpdate(p.name, key, caps)"
-        />
-
-        <div class="flex items-center gap-3">
-          <Button
-            size="sm"
-            variant="secondary"
-            @click="testProvider(p)"
-            :disabled="testing === p.name"
-          >
-            {{ testing === p.name ? 'Testing...' : 'Test' }}
-          </Button>
-          <span v-if="testResult[p.name]?.valid" class="text-xs text-green-500">OK</span>
-          <span v-else-if="testResult[p.name]?.error" class="text-xs text-destructive">{{ testResult[p.name].error }}</span>
-
-          <div class="flex-1" />
-
-          <Button
-            size="sm"
-            @click="updateProvider(p)"
-            :disabled="saving === p.name"
-          >
-            {{ saving === p.name ? 'Saving...' : 'Save' }}
-          </Button>
-        </div>
-      </template>
-    </Card>
+    <ProviderCard
+      v-for="p in providers"
+      :key="p.name"
+      :name="p.name"
+      v-model:enabled="p.enabled"
+      v-model:base-url="p.base_url"
+      v-model:api-key-value="newApiKey[p.name]"
+      :has-existing-key="p.has_api_key"
+      v-model:monthly-budget="p.monthly_budget"
+      v-model:emergency-reserve="p.emergency_reserve"
+      v-model:total-vram-bytes="p.total_vram_bytes"
+      :enabled-models="enabledModelsFor(p)"
+      :show-save="true"
+      :testing="testing === p.name"
+      :saving="saving === p.name"
+      :test-result="testResult[p.name] ?? null"
+      @test="testProvider(p)"
+      @save="updateProvider(p)"
+      @model-enable="(model) => handleModelEnable(p.name, model)"
+      @model-disable="(key) => handleModelDisable(p.name, key)"
+      @update-capabilities="(key, caps) => handleCapabilityUpdate(p.name, key, caps)"
+      @update-prefer-loaded="(key, val) => handlePreferLoadedUpdate(p.name, key, val)"
+    />
   </div>
 </template>

@@ -211,6 +211,11 @@ func RunMigrations(db *sql.DB) error {
 				ALTER TABLE provider_models ADD COLUMN supports_tools BOOLEAN DEFAULT NULL;
 			END IF;
 		END $$`,
+		`DO $$ BEGIN
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'provider_models' AND column_name = 'prefer_loaded') THEN
+				ALTER TABLE provider_models ADD COLUMN prefer_loaded BOOLEAN DEFAULT false;
+			END IF;
+		END $$`,
 	}
 
 	for _, m := range migrations {

@@ -68,6 +68,18 @@ func (vt *VRAMTracker) CanFit(modelName string, vramEstimate int64) bool {
 	return free >= vramEstimate
 }
 
+// IsLoaded returns true if the model is currently loaded in VRAM.
+func (vt *VRAMTracker) IsLoaded(modelName string) bool {
+	vt.mu.RLock()
+	defer vt.mu.RUnlock()
+	for _, m := range vt.loaded {
+		if m.Name == modelName {
+			return true
+		}
+	}
+	return false
+}
+
 // Acquire reserves a concurrency slot for a model. Max 1 per model.
 func (vt *VRAMTracker) Acquire(modelName string) bool {
 	vt.mu.Lock()
