@@ -29,6 +29,7 @@ venv/
 Thumbs.db
 
 # Project
+.new/
 .old/
 .claude/
 
