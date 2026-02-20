@@ -11,6 +11,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: 'http://host.docker.internal:11434',
     monthly_budget: 0,
     emergency_reserve: 0,
+    total_vram_bytes: 0,
     models: [],
   },
   {
@@ -20,6 +21,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: '',
     monthly_budget: 20,
     emergency_reserve: 2,
+    total_vram_bytes: 0,
     models: [],
   },
   {
@@ -29,6 +31,7 @@ const DEFAULT_PROVIDERS: ProviderSetup[] = [
     base_url: '',
     monthly_budget: 10,
     emergency_reserve: 1,
+    total_vram_bytes: 0,
     models: [],
   },
 ]

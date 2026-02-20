@@ -35,6 +35,7 @@ func (s *Server) handleSettingsProviderPut(c *gin.Context) {
 		BaseURL          *string  `json:"base_url"`
 		MonthlyBudget    *float64 `json:"monthly_budget"`
 		EmergencyReserve *float64 `json:"emergency_reserve"`
+		TotalVRAMBytes   *int64   `json:"total_vram_bytes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -76,8 +77,12 @@ func (s *Server) handleSettingsProviderPut(c *gin.Context) {
 	if req.EmergencyReserve != nil {
 		reserve = *req.EmergencyReserve
 	}
+	vram := current.TotalVRAMBytes
+	if req.TotalVRAMBytes != nil {
+		vram = *req.TotalVRAMBytes
+	}
 
-	if err := s.ConfigStore.SaveProvider(name, enabled, req.APIKey, baseURL, budget, reserve); err != nil {
+	if err := s.ConfigStore.SaveProvider(name, enabled, req.APIKey, baseURL, budget, reserve, vram); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -98,7 +103,7 @@ func (s *Server) handleSettingsModelAdd(c *gin.Context) {
 		return
 	}
 
-	if err := s.ConfigStore.SaveModel(name, req.ModelKey, req.ModelName, req.InputCostPer1M, req.OutputCostPer1M, req.Capabilities, req.Quality); err != nil {
+	if err := s.ConfigStore.SaveModel(name, req.ModelKey, req.ModelName, req.InputCostPer1M, req.OutputCostPer1M, req.Capabilities, req.Quality, req.VRAMEstimateBytes, req.SupportsTools); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -327,10 +332,10 @@ func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 			Model   string `json:"model"`
 			Size    int64  `json:"size"`
 			Details struct {
-				Family          string   `json:"family"`
-				Families        []string `json:"families"`
-				ParameterSize   string   `json:"parameter_size"`
-				QuantizationLevel string `json:"quantization_level"`
+				Family            string   `json:"family"`
+				Families          []string `json:"families"`
+				ParameterSize     string   `json:"parameter_size"`
+				QuantizationLevel string   `json:"quantization_level"`
 			} `json:"details"`
 		} `json:"models"`
 	}
@@ -340,25 +345,98 @@ func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 	}
 
 	type discoveredModel struct {
-		Name            string   `json:"name"`
-		Family          string   `json:"family"`
-		ParameterSize   string   `json:"parameter_size"`
-		Quantization    string   `json:"quantization"`
-		SizeBytes       int64    `json:"size_bytes"`
+		Name            string      `json:"name"`
+		Family          string      `json:"family"`
+		ParameterSize   string      `json:"parameter_size"`
+		Quantization    string      `json:"quantization"`
+		SizeBytes       int64       `json:"size_bytes"`
+		VRAMEstimate    int64       `json:"vram_estimate"`
+		SupportsTools   *bool       `json:"supports_tools"`
+		HasThinking     bool        `json:"has_thinking"`
 		Recommended     *knownModel `json:"recommended,omitempty"`
 	}
 
+	// Fetch /api/show for each model concurrently (semaphore of 4)
+	type showResult struct {
+		index         int
+		capabilities  []string
+		vramEstimate  int64
+	}
+
+	showResults := make([]showResult, len(ollamaResp.Models))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+
+	for i, m := range ollamaResp.Models {
+		wg.Add(1)
+		go func(idx int, modelName string, diskSize int64) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			sr := showResult{index: idx}
+			// VRAM estimate: disk size × 1.15 (KV cache overhead)
+			sr.vramEstimate = int64(float64(diskSize) * 1.15)
+
+			showBody := fmt.Sprintf(`{"name":%q}`, modelName)
+			showResp, err := client.Post(baseURL+"/api/show", "application/json", strings.NewReader(showBody))
+			if err != nil {
+				showResults[idx] = sr
+				return
+			}
+			defer showResp.Body.Close()
+
+			if showResp.StatusCode == http.StatusOK {
+				var showData struct {
+					Capabilities []string `json:"capabilities"`
+				}
+				if err := json.NewDecoder(showResp.Body).Decode(&showData); err == nil {
+					sr.capabilities = showData.Capabilities
+				}
+			}
+			showResults[idx] = sr
+		}(i, m.Name, m.Size)
+	}
+	wg.Wait()
+
 	models := make([]discoveredModel, 0, len(ollamaResp.Models))
-	for _, m := range ollamaResp.Models {
+	for i, m := range ollamaResp.Models {
 		dm := discoveredModel{
 			Name:          m.Name,
 			Family:        m.Details.Family,
 			ParameterSize: m.Details.ParameterSize,
 			Quantization:  m.Details.QuantizationLevel,
 			SizeBytes:     m.Size,
+			VRAMEstimate:  showResults[i].vramEstimate,
 		}
+
+		// Process capabilities from /api/show
+		apiCaps := showResults[i].capabilities
+		if len(apiCaps) > 0 {
+			hasTools := containsStr(apiCaps, "tools")
+			dm.SupportsTools = &hasTools
+			dm.HasThinking = containsStr(apiCaps, "thinking")
+		}
+
 		// Match against known Ollama model families for recommended defaults
 		if rec := matchOllamaModel(m.Name, m.Details.Family); rec != nil {
+			// Override tool support from API if available
+			if dm.SupportsTools != nil {
+				if *dm.SupportsTools {
+					if !containsStr(rec.Capabilities, "tools") {
+						rec.Capabilities = append(rec.Capabilities, "tools")
+					}
+				} else {
+					// Remove "tools" from capabilities if API says no tools
+					filtered := make([]string, 0, len(rec.Capabilities))
+					for _, c := range rec.Capabilities {
+						if c != "tools" {
+							filtered = append(filtered, c)
+						}
+					}
+					rec.Capabilities = filtered
+				}
+			}
 			dm.Recommended = rec
 		}
 		models = append(models, dm)
@@ -367,18 +445,34 @@ func (s *Server) discoverOllamaModelsWithURL(c *gin.Context, baseURL string) {
 	c.JSON(http.StatusOK, gin.H{"models": models})
 }
 
+// GET /api/settings/vram — returns VRAM tracker status
+func (s *Server) handleSettingsVRAMStatus(c *gin.Context) {
+	if s.LLM == nil || s.LLM.VRAM == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"enabled":          false,
+			"total_vram_bytes": 0,
+		})
+		return
+	}
+	status := s.LLM.VRAM.GetStatus()
+	status["enabled"] = true
+	c.JSON(http.StatusOK, status)
+}
+
 // PUT /api/settings/providers/:name/models/:key
 func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 	name := c.Param("name")
 	key := c.Param("key")
 
 	var req struct {
-		ModelName      *string  `json:"model_name"`
-		InputCostPer1M *float64 `json:"input_cost_per_1m"`
-		OutputCostPer1M *float64 `json:"output_cost_per_1m"`
-		Capabilities   []string `json:"capabilities"`
-		Quality        *int     `json:"quality"`
-		Enabled        *bool    `json:"enabled"`
+		ModelName         *string  `json:"model_name"`
+		InputCostPer1M    *float64 `json:"input_cost_per_1m"`
+		OutputCostPer1M   *float64 `json:"output_cost_per_1m"`
+		Capabilities      []string `json:"capabilities"`
+		Quality           *int     `json:"quality"`
+		Enabled           *bool    `json:"enabled"`
+		VRAMEstimateBytes *int64   `json:"vram_estimate_bytes"`
+		SupportsTools     *bool    `json:"supports_tools"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -394,7 +488,7 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 	}
 
 	// If updating other fields, we need to load current values and merge
-	if req.ModelName != nil || req.InputCostPer1M != nil || req.OutputCostPer1M != nil || req.Capabilities != nil || req.Quality != nil {
+	if req.ModelName != nil || req.InputCostPer1M != nil || req.OutputCostPer1M != nil || req.Capabilities != nil || req.Quality != nil || req.VRAMEstimateBytes != nil || req.SupportsTools != nil {
 		current, err := s.ConfigStore.GetModel(name, key)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
@@ -420,7 +514,15 @@ func (s *Server) handleSettingsModelUpdate(c *gin.Context) {
 		if req.Quality != nil {
 			q = *req.Quality
 		}
-		if err := s.ConfigStore.SaveModel(name, key, mn, ic, oc, caps, q); err != nil {
+		vramEst := current.VRAMEstimateBytes
+		if req.VRAMEstimateBytes != nil {
+			vramEst = *req.VRAMEstimateBytes
+		}
+		supTools := current.SupportsTools
+		if req.SupportsTools != nil {
+			supTools = req.SupportsTools
+		}
+		if err := s.ConfigStore.SaveModel(name, key, mn, ic, oc, caps, q, vramEst, supTools); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

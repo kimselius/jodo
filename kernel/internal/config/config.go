@@ -49,6 +49,7 @@ type ProviderConfig struct {
 	Models           map[string]ModelConfig `yaml:"models"`
 	MonthlyBudget    float64                `yaml:"monthly_budget"`
 	EmergencyReserve float64                `yaml:"emergency_reserve"`
+	TotalVRAMBytes   int64                  `yaml:"total_vram_bytes"` // 0 = no VRAM tracking
 }
 
 type ModelConfig struct {
@@ -57,6 +58,8 @@ type ModelConfig struct {
 	OutputCostPer1MTokens float64  `yaml:"output_cost_per_1m_tokens"`
 	Capabilities          []string `yaml:"capabilities"`
 	Quality               int      `yaml:"quality"`
+	VRAMEstimateBytes     int64    `yaml:"vram_estimate_bytes"` // approx VRAM when loaded
+	SupportsTools         *bool    `yaml:"supports_tools"`      // nil = unknown
 }
 
 // ModelName returns the actual model identifier to send to the provider API.

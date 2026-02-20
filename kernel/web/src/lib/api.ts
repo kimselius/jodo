@@ -249,6 +249,10 @@ export const api = {
     })
   },
 
+  getVRAMStatus() {
+    return request<{ enabled: boolean; total_vram_bytes: number; used_vram_bytes?: number; free_vram_bytes?: number; loaded_models?: Array<{ name: string; size_vram: number }> }>('/api/settings/vram')
+  },
+
   // Library
   getLibrary(status?: string) {
     const qs = status ? `?status=${status}` : ''

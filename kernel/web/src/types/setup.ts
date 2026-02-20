@@ -24,6 +24,7 @@ export interface ProviderSetup {
   base_url: string
   monthly_budget: number
   emergency_reserve: number
+  total_vram_bytes: number
   models: ModelSetup[]
 }
 
@@ -34,6 +35,8 @@ export interface ModelSetup {
   output_cost_per_1m: number
   capabilities: string[]
   quality: number
+  vram_estimate_bytes: number
+  supports_tools: boolean | null
 }
 
 export interface GenesisSetup {
@@ -53,6 +56,7 @@ export interface ProviderInfo {
   base_url: string
   monthly_budget: number
   emergency_reserve: number
+  total_vram_bytes: number
   models: ModelInfo[]
 }
 
@@ -64,6 +68,8 @@ export interface ModelInfo {
   capabilities: string[]
   quality: number
   enabled: boolean
+  vram_estimate_bytes: number
+  supports_tools: boolean | null
 }
 
 export interface SSHStatus {

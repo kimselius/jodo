@@ -27,7 +27,7 @@ watch(() => props.routing, (r) => {
   }
 }, { immediate: true })
 
-const intents = ['code', 'chat', 'embed', 'reasoning', 'tools', 'quick', 'repair']
+const intents = ['code', 'plan', 'chat', 'embed']
 
 // Build master list of all enabled model@provider refs
 const availableModels = computed(() => {

@@ -30,6 +30,7 @@ async function updateProvider(p: ProviderInfo) {
       base_url: p.base_url,
       monthly_budget: p.monthly_budget,
       emergency_reserve: p.emergency_reserve,
+      total_vram_bytes: p.total_vram_bytes || 0,
     }
     if (newApiKey.value[p.name]) {
       update.api_key = newApiKey.value[p.name]
@@ -102,9 +103,24 @@ async function handleCapabilityUpdate(providerName: string, modelKey: string, ca
       </div>
 
       <template v-if="p.enabled">
-        <div v-if="p.name === 'ollama'">
-          <label class="text-sm font-medium mb-1.5 block">Base URL</label>
-          <Input v-model="p.base_url" />
+        <div v-if="p.name === 'ollama'" class="space-y-4">
+          <div>
+            <label class="text-sm font-medium mb-1.5 block">Base URL</label>
+            <Input v-model="p.base_url" />
+          </div>
+          <div>
+            <label class="text-sm font-medium mb-1.5 block">Total GPU VRAM (GB)</label>
+            <Input
+              :model-value="p.total_vram_bytes ? String(Math.round(p.total_vram_bytes / 1073741824)) : ''"
+              @update:model-value="(v?: string) => p.total_vram_bytes = Number(v || 0) * 1073741824"
+              type="number"
+              placeholder="e.g. 48"
+              step="1"
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Total VRAM across all GPUs. Used to prevent loading models that don't fit. Leave empty to disable.
+            </p>
+          </div>
         </div>
 
         <template v-else>

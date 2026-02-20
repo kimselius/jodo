@@ -36,9 +36,12 @@ interface DiscoveredModel {
   parameter_size?: string
   quantization?: string
   size_bytes?: number
+  vram_estimate?: number
+  supports_tools?: boolean | null
+  has_thinking?: boolean
 }
 
-const ALL_CAPABILITIES = ['code', 'chat', 'embed', 'reasoning', 'tools', 'quick', 'repair'] as const
+const ALL_CAPABILITIES = ['code', 'plan', 'chat', 'embed'] as const
 
 const props = withDefaults(defineProps<{
   providerName: string
@@ -258,6 +261,15 @@ function tierBadgeVariant(tier: string): string {
                   <span v-if="model.parameter_size" class="text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded">
                     {{ model.parameter_size }}
                   </span>
+                  <span v-if="model.supports_tools === true" class="text-[10px] text-green-600 bg-green-500/10 px-1.5 py-0.5 rounded">
+                    tools
+                  </span>
+                  <span v-else-if="model.supports_tools === false" class="text-[10px] text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                    no tools
+                  </span>
+                  <span v-if="model.has_thinking" class="text-[10px] text-blue-600 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                    thinking
+                  </span>
                 </div>
                 <p v-if="getDescription(model)" class="text-xs text-muted-foreground truncate mt-0.5">
                   {{ getDescription(model) }}
@@ -267,7 +279,10 @@ function tierBadgeVariant(tier: string): string {
                 <div v-if="model.quality" class="text-[10px] text-muted-foreground">
                   q{{ model.quality }}
                 </div>
-                <div v-if="model.size_bytes" class="text-[10px] text-muted-foreground">
+                <div v-if="model.vram_estimate" class="text-[10px] text-muted-foreground">
+                  ~{{ formatSize(model.vram_estimate) }} VRAM
+                </div>
+                <div v-else-if="model.size_bytes" class="text-[10px] text-muted-foreground">
                   {{ formatSize(model.size_bytes) }}
                 </div>
                 <div class="text-[10px] text-muted-foreground">

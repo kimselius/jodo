@@ -16,26 +16,20 @@ defineEmits<{
   back: []
 }>()
 
-const intents = ['code', 'chat', 'embed', 'reasoning', 'tools', 'quick', 'repair']
+const intents = ['code', 'plan', 'chat', 'embed']
 
 const intentLabels: Record<string, string> = {
-  code: 'Code',
+  code: 'Code (Execution)',
+  plan: 'Plan (Analysis)',
   chat: 'Chat',
   embed: 'Embedding',
-  reasoning: 'Reasoning',
-  tools: 'Tool Use',
-  quick: 'Quick Tasks',
-  repair: 'Repair',
 }
 
 const intentDescriptions: Record<string, string> = {
-  code: 'Writing code, building features, debugging',
-  chat: 'Conversations with the human, general responses',
+  code: 'Writing code, executing tools, building features — needs tool support',
+  plan: 'Planning phase — inspects state, no writes, cheaper model OK',
+  chat: 'Conversations with the human',
   embed: 'Text embeddings for search and memory',
-  reasoning: 'Complex reasoning, analysis, planning',
-  tools: 'Tool-calling tasks (read/write/execute)',
-  quick: 'Fast, simple tasks where speed matters',
-  repair: 'Self-repair when something breaks',
 }
 
 // All enabled models across all providers

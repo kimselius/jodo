@@ -22,15 +22,17 @@ type Router struct {
 	routing   config.RoutingConfig
 	budget    *BudgetTracker
 	busy      *BusyTracker
+	vram      *VRAMTracker
 }
 
-func NewRouter(providers map[string]Provider, configs map[string]config.ProviderConfig, routing config.RoutingConfig, budget *BudgetTracker, busy *BusyTracker) *Router {
+func NewRouter(providers map[string]Provider, configs map[string]config.ProviderConfig, routing config.RoutingConfig, budget *BudgetTracker, busy *BusyTracker, vram *VRAMTracker) *Router {
 	return &Router{
 		providers: providers,
 		configs:   configs,
 		routing:   routing,
 		budget:    budget,
 		busy:      busy,
+		vram:      vram,
 	}
 }
 
@@ -94,6 +96,13 @@ func (r *Router) Route(intent string, maxTokens int, needsTools bool) (*RouteRes
 			continue
 		}
 
+		// VRAM check for Ollama — skip if model won't fit in GPU memory
+		if r.vram != nil && provName == "ollama" {
+			if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+				continue
+			}
+		}
+
 		estimated := EstimateCost(mc, maxTokens)
 		canAfford, _, err := r.budget.CanAfford(provName, estimated, intent)
 		if err != nil || !canAfford {
@@ -135,6 +144,12 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 			if !found || !hasCapability(mc.Capabilities, "embed") {
 				continue
 			}
+			// VRAM check for Ollama
+			if r.vram != nil && provName == "ollama" {
+				if !r.vram.CanFit(mc.ModelName(modelKey), mc.VRAMEstimateBytes) {
+					continue
+				}
+			}
 			canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
 			if canAfford {
 				return &RouteResult{
@@ -150,6 +165,12 @@ func (r *Router) RouteEmbed() (*RouteResult, error) {
 			for mk, mc := range provCfg.Models {
 				if !hasCapability(mc.Capabilities, "embed") {
 					continue
+				}
+				// VRAM check for Ollama
+				if r.vram != nil && provName == "ollama" {
+					if !r.vram.CanFit(mc.ModelName(mk), mc.VRAMEstimateBytes) {
+						continue
+					}
 				}
 				canAfford, _, _ := r.budget.CanAfford(provName, EstimateCost(mc, 100), "embed")
 				if canAfford {

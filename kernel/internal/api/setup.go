@@ -148,12 +148,12 @@ func (s *Server) handleSetupProviders(c *gin.Context) {
 	}
 
 	for _, p := range req.Providers {
-		if err := s.ConfigStore.SaveProvider(p.Name, p.Enabled, p.APIKey, p.BaseURL, p.MonthlyBudget, p.EmergencyReserve); err != nil {
+		if err := s.ConfigStore.SaveProvider(p.Name, p.Enabled, p.APIKey, p.BaseURL, p.MonthlyBudget, p.EmergencyReserve, p.TotalVRAMBytes); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save provider %s: %v", p.Name, err)})
 			return
 		}
 		for _, m := range p.Models {
-			if err := s.ConfigStore.SaveModel(p.Name, m.ModelKey, m.ModelName, m.InputCostPer1M, m.OutputCostPer1M, m.Capabilities, m.Quality); err != nil {
+			if err := s.ConfigStore.SaveModel(p.Name, m.ModelKey, m.ModelName, m.InputCostPer1M, m.OutputCostPer1M, m.Capabilities, m.Quality, m.VRAMEstimateBytes, m.SupportsTools); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("save model %s/%s: %v", p.Name, m.ModelKey, err)})
 				return
 			}
@@ -171,16 +171,19 @@ type providerSetupReq struct {
 	BaseURL          string          `json:"base_url"`
 	MonthlyBudget    float64         `json:"monthly_budget"`
 	EmergencyReserve float64         `json:"emergency_reserve"`
+	TotalVRAMBytes   int64           `json:"total_vram_bytes"`
 	Models           []modelSetupReq `json:"models"`
 }
 
 type modelSetupReq struct {
-	ModelKey       string   `json:"model_key"`
-	ModelName      string   `json:"model_name"`
-	InputCostPer1M float64  `json:"input_cost_per_1m"`
-	OutputCostPer1M float64 `json:"output_cost_per_1m"`
-	Capabilities   []string `json:"capabilities"`
-	Quality        int      `json:"quality"`
+	ModelKey          string   `json:"model_key"`
+	ModelName         string   `json:"model_name"`
+	InputCostPer1M    float64  `json:"input_cost_per_1m"`
+	OutputCostPer1M   float64  `json:"output_cost_per_1m"`
+	Capabilities      []string `json:"capabilities"`
+	Quality           int      `json:"quality"`
+	VRAMEstimateBytes int64    `json:"vram_estimate_bytes"`
+	SupportsTools     *bool    `json:"supports_tools"`
 }
 
 // POST /api/setup/genesis — save genesis config

@@ -109,6 +109,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		settings.POST("/ssh/verify", s.handleSetupSSHVerify)
 		settings.GET("/subagent", s.handleSettingsSubagentGet)
 		settings.PUT("/subagent", s.handleSettingsSubagentPut)
+		settings.GET("/vram", s.handleSettingsVRAMStatus)
 	}
 
 	// Operational endpoints — require setup complete

@@ -95,7 +95,7 @@ func (s *DBStore) GetSecret(key string) (string, error) {
 // --- provider CRUD ---
 
 // SaveProvider stores a provider config. If apiKey is non-empty, it's encrypted.
-func (s *DBStore) SaveProvider(name string, enabled bool, apiKey, baseURL string, monthlyBudget, emergencyReserve float64) error {
+func (s *DBStore) SaveProvider(name string, enabled bool, apiKey, baseURL string, monthlyBudget, emergencyReserve float64, totalVRAMBytes int64) error {
 	var apiKeyEnc []byte
 	if apiKey != "" {
 		var err error
@@ -106,24 +106,24 @@ func (s *DBStore) SaveProvider(name string, enabled bool, apiKey, baseURL string
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO providers (name, enabled, api_key_encrypted, base_url, monthly_budget, emergency_reserve, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		`INSERT INTO providers (name, enabled, api_key_encrypted, base_url, monthly_budget, emergency_reserve, total_vram_bytes, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 		 ON CONFLICT (name) DO UPDATE SET
 		   enabled = $2, api_key_encrypted = COALESCE($3, providers.api_key_encrypted),
-		   base_url = $4, monthly_budget = $5, emergency_reserve = $6, updated_at = NOW()`,
-		name, enabled, apiKeyEnc, nullIfEmpty(baseURL), monthlyBudget, emergencyReserve,
+		   base_url = $4, monthly_budget = $5, emergency_reserve = $6, total_vram_bytes = $7, updated_at = NOW()`,
+		name, enabled, apiKeyEnc, nullIfEmpty(baseURL), monthlyBudget, emergencyReserve, totalVRAMBytes,
 	)
 	return err
 }
 
 // SaveModel stores a model config for a provider.
-func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inputCost, outputCost float64, capabilities []string, quality int) error {
+func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inputCost, outputCost float64, capabilities []string, quality int, vramEstimateBytes int64, supportsTools *bool) error {
 	_, err := s.db.Exec(
-		`INSERT INTO provider_models (provider_name, model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO provider_models (provider_name, model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (provider_name, model_key) DO UPDATE SET
-		   model_name = $3, input_cost_per_1m = $4, output_cost_per_1m = $5, capabilities = $6, quality = $7`,
-		providerName, modelKey, modelName, inputCost, outputCost, pq.Array(capabilities), quality,
+		   model_name = $3, input_cost_per_1m = $4, output_cost_per_1m = $5, capabilities = $6, quality = $7, vram_estimate_bytes = $8, supports_tools = $9`,
+		providerName, modelKey, modelName, inputCost, outputCost, pq.Array(capabilities), quality, vramEstimateBytes, supportsTools,
 	)
 	return err
 }
@@ -132,10 +132,10 @@ func (s *DBStore) SaveModel(providerName string, modelKey, modelName string, inp
 func (s *DBStore) GetModel(providerName, modelKey string) (*ModelInfo, error) {
 	var m ModelInfo
 	err := s.db.QueryRow(
-		`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled
+		`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools
 		 FROM provider_models WHERE provider_name = $1 AND model_key = $2`,
 		providerName, modelKey,
-	).Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled)
+	).Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 
 	// Providers
 	cfg.Providers = make(map[string]ProviderConfig)
-	rows, err := s.db.Query(`SELECT name, enabled, api_key_encrypted, base_url, monthly_budget, emergency_reserve FROM providers WHERE enabled = true`)
+	rows, err := s.db.Query(`SELECT name, enabled, api_key_encrypted, base_url, monthly_budget, emergency_reserve, total_vram_bytes FROM providers WHERE enabled = true`)
 	if err != nil {
 		return nil, fmt.Errorf("load providers: %w", err)
 	}
@@ -283,8 +283,9 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 		var apiKeyEnc []byte
 		var baseURL sql.NullString
 		var budget, reserve float64
+		var totalVRAM int64
 
-		if err := rows.Scan(&name, &enabled, &apiKeyEnc, &baseURL, &budget, &reserve); err != nil {
+		if err := rows.Scan(&name, &enabled, &apiKeyEnc, &baseURL, &budget, &reserve, &totalVRAM); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 
@@ -301,12 +302,13 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 			BaseURL:          baseURL.String,
 			MonthlyBudget:    budget,
 			EmergencyReserve: reserve,
+			TotalVRAMBytes:   totalVRAM,
 			Models:           make(map[string]ModelConfig),
 		}
 
 		// Load models for this provider
 		modelRows, err := s.db.Query(
-			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality
+			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, vram_estimate_bytes, supports_tools
 			 FROM provider_models WHERE provider_name = $1 AND enabled = true`, name,
 		)
 		if err != nil {
@@ -318,7 +320,9 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 			var ic, oc float64
 			var caps []string
 			var q int
-			if err := modelRows.Scan(&mk, &mn, &ic, &oc, pq.Array(&caps), &q); err != nil {
+			var vramEst int64
+			var supTools *bool
+			if err := modelRows.Scan(&mk, &mn, &ic, &oc, pq.Array(&caps), &q, &vramEst, &supTools); err != nil {
 				modelRows.Close()
 				return nil, fmt.Errorf("scan model: %w", err)
 			}
@@ -328,6 +332,8 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 				OutputCostPer1MTokens: oc,
 				Capabilities:          caps,
 				Quality:               q,
+				VRAMEstimateBytes:     vramEst,
+				SupportsTools:         supTools,
 			}
 		}
 		modelRows.Close()
@@ -355,29 +361,32 @@ func (s *DBStore) LoadFullConfig(dbCfg DatabaseConfig) (*Config, error) {
 
 // ProviderInfo is the API-safe representation of a provider (key masked).
 type ProviderInfo struct {
-	Name             string        `json:"name"`
-	Enabled          bool          `json:"enabled"`
-	HasAPIKey        bool          `json:"has_api_key"`
-	BaseURL          string        `json:"base_url"`
-	MonthlyBudget    float64       `json:"monthly_budget"`
-	EmergencyReserve float64       `json:"emergency_reserve"`
-	Models           []ModelInfo   `json:"models"`
+	Name             string      `json:"name"`
+	Enabled          bool        `json:"enabled"`
+	HasAPIKey        bool        `json:"has_api_key"`
+	BaseURL          string      `json:"base_url"`
+	MonthlyBudget    float64     `json:"monthly_budget"`
+	EmergencyReserve float64     `json:"emergency_reserve"`
+	TotalVRAMBytes   int64       `json:"total_vram_bytes"`
+	Models           []ModelInfo `json:"models"`
 }
 
 // ModelInfo is the API representation of a model.
 type ModelInfo struct {
-	ModelKey          string   `json:"model_key"`
-	ModelName         string   `json:"model_name"`
-	InputCostPer1M    float64  `json:"input_cost_per_1m"`
-	OutputCostPer1M   float64  `json:"output_cost_per_1m"`
-	Capabilities      []string `json:"capabilities"`
-	Quality           int      `json:"quality"`
-	Enabled           bool     `json:"enabled"`
+	ModelKey           string   `json:"model_key"`
+	ModelName          string   `json:"model_name"`
+	InputCostPer1M     float64  `json:"input_cost_per_1m"`
+	OutputCostPer1M    float64  `json:"output_cost_per_1m"`
+	Capabilities       []string `json:"capabilities"`
+	Quality            int      `json:"quality"`
+	Enabled            bool     `json:"enabled"`
+	VRAMEstimateBytes  int64    `json:"vram_estimate_bytes"`
+	SupportsTools      *bool    `json:"supports_tools"`
 }
 
 // ListProviders returns all providers with their models (API keys masked).
 func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
-	rows, err := s.db.Query(`SELECT name, enabled, api_key_encrypted IS NOT NULL, base_url, monthly_budget, emergency_reserve FROM providers ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, enabled, api_key_encrypted IS NOT NULL, base_url, monthly_budget, emergency_reserve, total_vram_bytes FROM providers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -387,14 +396,14 @@ func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
 	for rows.Next() {
 		var p ProviderInfo
 		var baseURL sql.NullString
-		if err := rows.Scan(&p.Name, &p.Enabled, &p.HasAPIKey, &baseURL, &p.MonthlyBudget, &p.EmergencyReserve); err != nil {
+		if err := rows.Scan(&p.Name, &p.Enabled, &p.HasAPIKey, &baseURL, &p.MonthlyBudget, &p.EmergencyReserve, &p.TotalVRAMBytes); err != nil {
 			return nil, err
 		}
 		p.BaseURL = baseURL.String
 
 		// Load models
 		modelRows, err := s.db.Query(
-			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled
+			`SELECT model_key, model_name, input_cost_per_1m, output_cost_per_1m, capabilities, quality, enabled, vram_estimate_bytes, supports_tools
 			 FROM provider_models WHERE provider_name = $1 ORDER BY model_key`, p.Name,
 		)
 		if err != nil {
@@ -402,7 +411,7 @@ func (s *DBStore) ListProviders() ([]ProviderInfo, error) {
 		}
 		for modelRows.Next() {
 			var m ModelInfo
-			if err := modelRows.Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled); err != nil {
+			if err := modelRows.Scan(&m.ModelKey, &m.ModelName, &m.InputCostPer1M, &m.OutputCostPer1M, pq.Array(&m.Capabilities), &m.Quality, &m.Enabled, &m.VRAMEstimateBytes, &m.SupportsTools); err != nil {
 				modelRows.Close()
 				return nil, err
 			}

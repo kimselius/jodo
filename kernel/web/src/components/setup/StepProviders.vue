@@ -86,13 +86,28 @@ function handleCapabilityUpdate(provider: ProviderSetup, modelKey: string, capab
       </div>
 
       <template v-if="provider.enabled">
-        <!-- Ollama: base URL only -->
-        <div v-if="provider.name === 'ollama'">
-          <label class="text-sm font-medium mb-1.5 block">Base URL</label>
-          <Input v-model="provider.base_url" placeholder="http://host.docker.internal:11434" />
-          <p class="text-xs text-muted-foreground mt-1">
-            If Ollama runs on the same machine, use <code>http://host.docker.internal:11434</code>
-          </p>
+        <!-- Ollama: base URL + VRAM -->
+        <div v-if="provider.name === 'ollama'" class="space-y-4">
+          <div>
+            <label class="text-sm font-medium mb-1.5 block">Base URL</label>
+            <Input v-model="provider.base_url" placeholder="http://host.docker.internal:11434" />
+            <p class="text-xs text-muted-foreground mt-1">
+              If Ollama runs on the same machine, use <code>http://host.docker.internal:11434</code>
+            </p>
+          </div>
+          <div>
+            <label class="text-sm font-medium mb-1.5 block">Total GPU VRAM (GB)</label>
+            <Input
+              :model-value="provider.total_vram_bytes ? String(Math.round(provider.total_vram_bytes / 1073741824)) : ''"
+              @update:model-value="(v?: string) => provider.total_vram_bytes = Number(v || 0) * 1073741824"
+              type="number"
+              placeholder="e.g. 48"
+              step="1"
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Total VRAM across all GPUs. Used to prevent loading models that don't fit. Leave empty to disable VRAM tracking.
+            </p>
+          </div>
         </div>
 
         <!-- Claude/OpenAI: API key + budget -->

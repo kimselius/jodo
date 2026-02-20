@@ -1094,7 +1094,7 @@ def live():
                 prompt = wakeup_prompt(genesis, inbox_messages, chat_messages)
                 plan, plan_actions = think_and_act(
                     messages=[{"role": "user", "content": prompt + "\n\n" + PLAN_INSTRUCTIONS}],
-                    intent="code",
+                    intent="plan",
                     tools=PLAN_TOOLS,
                 )
 

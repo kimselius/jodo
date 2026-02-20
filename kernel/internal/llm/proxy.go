@@ -20,6 +20,7 @@ type Proxy struct {
 	Router  *Router
 	Budget  *BudgetTracker
 	Busy    *BusyTracker
+	VRAM    *VRAMTracker
 	Chains  *ChainTracker
 	Audit   *audit.Logger
 	client  *http.Client
@@ -56,12 +57,20 @@ func NewProxy(db *sql.DB, providerConfigs map[string]config.ProviderConfig, rout
 	}
 	busy := NewBusyTracker(providerTypes)
 
-	router := NewRouter(providers, providerConfigs, routing, budget, busy)
+	// Create VRAM tracker for Ollama if VRAM capacity is configured
+	var vram *VRAMTracker
+	if ollamaCfg, ok := providerConfigs["ollama"]; ok && ollamaCfg.TotalVRAMBytes > 0 {
+		vram = NewVRAMTracker(ollamaCfg.BaseURL, ollamaCfg.TotalVRAMBytes)
+		log.Printf("[llm] VRAM tracker enabled: %s total", formatBytes(ollamaCfg.TotalVRAMBytes))
+	}
+
+	router := NewRouter(providers, providerConfigs, routing, budget, busy, vram)
 
 	return &Proxy{
 		Router:  router,
 		Budget:  budget,
 		Busy:    busy,
+		VRAM:    vram,
 		Chains:  NewChainTracker(),
 		client:  &http.Client{Timeout: 120 * time.Second},
 		configs: providerConfigs,
@@ -128,8 +137,14 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 		})
 	}
 
-	// Acquire busy slot (prevents overloading local models)
-	if p.Busy != nil {
+	// Acquire concurrency slot (prevents overloading local models)
+	if p.VRAM != nil && route.ProviderName == "ollama" {
+		// Use VRAM tracker for Ollama (per-model concurrency)
+		if !p.VRAM.Acquire(route.Model) {
+			return nil, fmt.Errorf("model %s/%s is busy", route.ProviderName, route.Model)
+		}
+		defer p.VRAM.Release(route.Model)
+	} else if p.Busy != nil {
 		if !p.Busy.Acquire(route.ProviderName, route.ModelKey) {
 			return nil, fmt.Errorf("model %s/%s is busy", route.ProviderName, route.ModelKey)
 		}
@@ -229,6 +244,11 @@ func (p *Proxy) Think(ctx context.Context, req *JodoRequest) (*JodoResponse, err
 // Reconfigure swaps the provider and routing config without restarting the kernel.
 // This is called when settings are changed via the UI.
 func (p *Proxy) Reconfigure(providerConfigs map[string]config.ProviderConfig, routing config.RoutingConfig) {
+	// Stop old VRAM tracker if it exists
+	if p.VRAM != nil {
+		p.VRAM.Stop()
+	}
+
 	providers := make(map[string]Provider)
 	for name, cfg := range providerConfigs {
 		switch name {
@@ -253,11 +273,19 @@ func (p *Proxy) Reconfigure(providerConfigs map[string]config.ProviderConfig, ro
 	}
 	busy := NewBusyTracker(providerTypes)
 
-	router := NewRouter(providers, providerConfigs, routing, budget, busy)
+	// Create new VRAM tracker if Ollama has VRAM configured
+	var vram *VRAMTracker
+	if ollamaCfg, ok := providerConfigs["ollama"]; ok && ollamaCfg.TotalVRAMBytes > 0 {
+		vram = NewVRAMTracker(ollamaCfg.BaseURL, ollamaCfg.TotalVRAMBytes)
+		log.Printf("[llm] VRAM tracker enabled: %s total", formatBytes(ollamaCfg.TotalVRAMBytes))
+	}
+
+	router := NewRouter(providers, providerConfigs, routing, budget, busy, vram)
 
 	p.Router = router
 	p.Budget = budget
 	p.Busy = busy
+	p.VRAM = vram
 	p.configs = providerConfigs
 
 	log.Printf("[llm] reconfigured with %d providers", len(providers))
