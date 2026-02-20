@@ -696,16 +696,25 @@ func enrichModel(id, displayName, provider string) knownModel {
 	// 2. Infer tier, quality, and recommended from model family (stable across versions)
 	inferTierAndQuality(&km, id, provider)
 
-	// 3. Add "code" capability for known coding-capable families
-	if km.Tier != "embed" && !containsStr(km.Capabilities, "code") {
+	// 3. Detect embedding models from the model ID itself
+	idLower := strings.ToLower(id)
+	isEmbed := km.Tier == "embed" || containsStr(km.Capabilities, "embed") ||
+		strings.Contains(idLower, "embed")
+
+	// 4. Add "code" capability for non-embedding models with decent quality
+	if !isEmbed && !containsStr(km.Capabilities, "code") {
 		if km.Quality >= 70 {
 			km.Capabilities = append(km.Capabilities, "code")
 		}
 	}
 
-	// 4. Fill in defaults if pricing DB didn't have this model
+	// 5. Fill in defaults if pricing DB didn't have this model
 	if len(km.Capabilities) == 0 {
-		km.Capabilities = []string{"chat", "tools"}
+		if isEmbed {
+			km.Capabilities = []string{"embed"}
+		} else {
+			km.Capabilities = []string{"chat", "tools"}
+		}
 	}
 	if km.Tier == "" {
 		km.Tier = "mid"
@@ -808,79 +817,102 @@ func containsStr(slice []string, s string) bool {
 // matchOllamaModel returns recommended defaults for a discovered Ollama model
 // based on its name and family.
 func matchOllamaModel(name, family string) *knownModel {
-	// Known model families with sensible defaults
-	ollamaDefaults := map[string]knownModel{
-		"llama": {
-			Capabilities: []string{"chat", "code", "tools"},
-			Quality: 70, Description: "Meta Llama model",
-		},
-		"qwen2": {
-			Capabilities: []string{"chat", "code", "tools"},
-			Quality: 70, Description: "Alibaba Qwen2 model",
-		},
-		"qwen3": {
-			Capabilities: []string{"chat", "code", "tools"},
-			Quality: 75, Description: "Alibaba Qwen3 model",
-		},
-		"gemma": {
-			Capabilities: []string{"chat", "code"},
-			Quality: 65, Description: "Google Gemma model",
-		},
-		"gemma2": {
-			Capabilities: []string{"chat", "code"},
-			Quality: 70, Description: "Google Gemma 2 model",
-		},
-		"mistral": {
-			Capabilities: []string{"chat", "code", "tools"},
-			Quality: 70, Description: "Mistral AI model",
-		},
-		"codellama": {
-			Capabilities: []string{"code", "chat"},
-			Quality: 65, Description: "Meta Code Llama model",
-		},
-		"deepseek-coder": {
-			Capabilities: []string{"code", "chat"},
-			Quality: 70, Description: "DeepSeek Coder model",
-		},
-		"phi": {
-			Capabilities: []string{"chat", "code"},
-			Quality: 60, Description: "Microsoft Phi model",
-		},
-		"nomic-embed-text": {
+	nameLower := strings.ToLower(name)
+
+	// 1. Check name for embedding/embed — these are always embedding-only models
+	if strings.Contains(nameLower, "embed") {
+		return &knownModel{
+			ModelKey: name, ModelName: name,
 			Capabilities: []string{"embed"},
-			Quality: 60, Description: "Nomic embedding model",
-		},
-		"mxbai-embed-large": {
-			Capabilities: []string{"embed"},
-			Quality: 70, Description: "Mixedbread embedding model",
-		},
-		"all-minilm": {
-			Capabilities: []string{"embed"},
-			Quality: 50, Description: "All-MiniLM embedding model",
-		},
-		"glm4": {
-			Capabilities: []string{"chat", "code", "tools"},
-			Quality: 70, Description: "GLM-4 model",
-		},
+			Quality: 65, Description: "Embedding model",
+		}
 	}
 
-	// Try family match first
-	if family != "" {
-		if def, ok := ollamaDefaults[family]; ok {
-			result := def
+	// 2. Check for reasoning models (deepseek-r1, qwq, etc.)
+	if strings.Contains(nameLower, "-r1") || strings.HasPrefix(nameLower, "qwq") ||
+		strings.Contains(nameLower, "reasoning") {
+		return &knownModel{
+			ModelKey: name, ModelName: name,
+			Capabilities: []string{"chat", "code", "reasoning"},
+			Quality: 80, Description: "Reasoning model",
+		}
+	}
+
+	// 3. Check for code-specialized models
+	if strings.Contains(nameLower, "coder") || strings.Contains(nameLower, "codellama") ||
+		strings.HasPrefix(nameLower, "starcoder") || strings.HasPrefix(nameLower, "codestral") {
+		return &knownModel{
+			ModelKey: name, ModelName: name,
+			Capabilities: []string{"code", "chat"},
+			Quality: 70, Description: "Code-specialized model",
+		}
+	}
+
+	// 4. Known model families with sensible defaults (ordered: more specific first)
+	type ollamaPattern struct {
+		prefix string
+		model  knownModel
+	}
+	patterns := []ollamaPattern{
+		// Specific families first
+		{"deepseek-v3", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 85, Description: "DeepSeek V3 model"}},
+		{"deepseek-coder", knownModel{Capabilities: []string{"code", "chat"}, Quality: 70, Description: "DeepSeek Coder model"}},
+		{"deepseek", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 75, Description: "DeepSeek model"}},
+		{"llama4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 80, Description: "Meta Llama 4 model"}},
+		{"llama3.3", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 78, Description: "Meta Llama 3.3 model"}},
+		{"llama3.2", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Meta Llama 3.2 model"}},
+		{"llama3.1", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Meta Llama 3.1 model"}},
+		{"llama", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Meta Llama model"}},
+		{"qwen3", knownModel{Capabilities: []string{"chat", "code", "tools", "reasoning"}, Quality: 78, Description: "Alibaba Qwen3 model"}},
+		{"qwen2.5-coder", knownModel{Capabilities: []string{"code", "chat", "tools"}, Quality: 75, Description: "Qwen 2.5 Coder model"}},
+		{"qwen2.5", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Alibaba Qwen 2.5 model"}},
+		{"qwen2", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Alibaba Qwen2 model"}},
+		{"gemma3", knownModel{Capabilities: []string{"chat", "code"}, Quality: 72, Description: "Google Gemma 3 model"}},
+		{"gemma2", knownModel{Capabilities: []string{"chat", "code"}, Quality: 70, Description: "Google Gemma 2 model"}},
+		{"gemma", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "Google Gemma model"}},
+		{"mistral-small", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Mistral Small model"}},
+		{"mistral-large", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 82, Description: "Mistral Large model"}},
+		{"mistral-nemo", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Mistral Nemo model"}},
+		{"mistral", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 70, Description: "Mistral AI model"}},
+		{"mixtral", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Mixtral MoE model"}},
+		{"codestral", knownModel{Capabilities: []string{"code", "chat", "tools"}, Quality: 78, Description: "Mistral Codestral model"}},
+		{"phi4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "Microsoft Phi-4 model"}},
+		{"phi3.5", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "Microsoft Phi-3.5 model"}},
+		{"phi3", knownModel{Capabilities: []string{"chat", "code"}, Quality: 62, Description: "Microsoft Phi-3 model"}},
+		{"phi", knownModel{Capabilities: []string{"chat", "code"}, Quality: 60, Description: "Microsoft Phi model"}},
+		{"command-r", knownModel{Capabilities: []string{"chat", "tools"}, Quality: 72, Description: "Cohere Command-R model"}},
+		{"aya", knownModel{Capabilities: []string{"chat"}, Quality: 60, Description: "Cohere Aya multilingual model"}},
+		{"glm4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "GLM-4 model"}},
+		{"glm-4", knownModel{Capabilities: []string{"chat", "code", "tools"}, Quality: 72, Description: "GLM-4 model"}},
+		{"yi", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "01.AI Yi model"}},
+		{"internlm", knownModel{Capabilities: []string{"chat", "code"}, Quality: 65, Description: "InternLM model"}},
+		{"nomic-embed", knownModel{Capabilities: []string{"embed"}, Quality: 60, Description: "Nomic embedding model"}},
+		{"mxbai-embed", knownModel{Capabilities: []string{"embed"}, Quality: 70, Description: "Mixedbread embedding model"}},
+		{"all-minilm", knownModel{Capabilities: []string{"embed"}, Quality: 50, Description: "All-MiniLM embedding model"}},
+		{"snowflake-arctic-embed", knownModel{Capabilities: []string{"embed"}, Quality: 68, Description: "Snowflake Arctic embedding model"}},
+		{"bge-", knownModel{Capabilities: []string{"embed"}, Quality: 65, Description: "BGE embedding model"}},
+	}
+
+	// Try name prefix match (ordered, so more specific patterns match first)
+	for _, p := range patterns {
+		if strings.HasPrefix(nameLower, p.prefix) {
+			result := p.model
 			result.ModelKey = name
 			result.ModelName = name
 			return &result
 		}
 	}
 
-	// Try name prefix match
-	for prefix, def := range ollamaDefaults {
-		if len(name) >= len(prefix) && name[:len(prefix)] == prefix {
-			result := def
-			result.ModelKey = name
-			result.ModelName = name
-			return &result
+	// 5. Try family match as fallback
+	if family != "" {
+		familyLower := strings.ToLower(family)
+		for _, p := range patterns {
+			if familyLower == p.prefix || strings.HasPrefix(familyLower, p.prefix) {
+				result := p.model
+				result.ModelKey = name
+				result.ModelName = name
+				return &result
+			}
 		}
 	}
 

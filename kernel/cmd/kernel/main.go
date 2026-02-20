@@ -417,11 +417,17 @@ func bootJodo(cfg *config.Config, proc *process.Manager, gitMgr *git.Manager, gr
 	}
 
 	// Check if seed.py is already running (e.g. Docker entrypoint auto-started it)
+	// Only skip deploy if seed.py actually exists in the brain directory
 	if pid, err := proc.GetPID(); err == nil && pid > 0 {
-		log.Printf("[boot] seed.py already running (PID %d) — skipping re-deploy")
-		proc.SetStatus("starting")
-		proc.SetGracePeriod(30 * time.Second)
-		return
+		seedExists, _ := proc.RunSSH(fmt.Sprintf("test -f %s/seed.py && echo yes || echo no", cfg.Jodo.BrainPath))
+		if strings.TrimSpace(seedExists) == "yes" {
+			log.Printf("[boot] seed.py already running (PID %d) — skipping re-deploy", pid)
+			proc.SetStatus("starting")
+			proc.SetGracePeriod(30 * time.Second)
+			return
+		}
+		log.Printf("[boot] found stale python process (PID %d) but no seed.py — will deploy fresh", pid)
+		proc.StopAll()
 	}
 
 	hasGit := gitMgr.GitExists()
