@@ -14,10 +14,10 @@ export const chatApi = {
     })
   },
 
-  ackMessages(upToId: number) {
+  ackMessages(upToId: number, source?: string) {
     return request<{ ok: boolean; marked: number }>('/api/chat/ack', {
       method: 'POST',
-      body: JSON.stringify({ up_to_id: upToId }),
+      body: JSON.stringify({ up_to_id: upToId, source }),
     })
   },
 }

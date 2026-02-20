@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from '@/lib/api'
 import { onWSEvent, useWebSocket } from './useWebSocket'
+import { clearBadge } from './useBadges'
 import type { ChatMessage } from '@/types/chat'
 
 export function useChat() {
@@ -9,11 +10,19 @@ export function useChat() {
   const sending = ref(false)
   const { connected } = useWebSocket()
 
+  function ack(upToId: number) {
+    api.ackMessages(upToId, 'jodo').catch(() => {})
+    clearBadge('/')
+  }
+
   async function loadHistory() {
     loading.value = true
     try {
       const data = await api.getMessages({ last: '50' })
       messages.value = data.messages || []
+      // Mark all loaded messages as read
+      const last = messages.value[messages.value.length - 1]
+      if (last) ack(last.id)
     } catch (e) {
       console.error('Failed to load chat history:', e)
     } finally {
@@ -31,6 +40,8 @@ export function useChat() {
         if (!messages.value.some(m => m.id === chatMsg.id)) {
           messages.value.push(chatMsg)
         }
+        // User is viewing chat — ack immediately
+        ack(chatMsg.id)
       }
     })
   }

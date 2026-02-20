@@ -18,13 +18,27 @@ const sshUser = ref(props.ssh?.user ?? 'root')
 const brainPath = ref(props.ssh?.brain_path ?? '/opt/jodo/brain')
 const publicKey = ref('')
 const generating = ref(false)
+const confirmingRegenerate = ref(false)
 const verifying = ref(false)
 const verifyResult = ref<{ connected: boolean; error?: string } | null>(null)
 const error = ref<string | null>(null)
 
 const isDocker = (props.ssh?.jodo_mode ?? 'vps') === 'docker'
 
-async function generateKey() {
+function handleRegenerateClick() {
+  if (!confirmingRegenerate.value) {
+    confirmingRegenerate.value = true
+    return
+  }
+  confirmingRegenerate.value = false
+  doGenerateKey()
+}
+
+function cancelRegenerate() {
+  confirmingRegenerate.value = false
+}
+
+async function doGenerateKey() {
   generating.value = true
   error.value = null
   try {
@@ -93,16 +107,23 @@ function copyKey() {
       </div>
     </Card>
 
-    <Card class="p-4 space-y-4">
+    <Card v-if="!isDocker && ssh?.has_key" class="p-4 space-y-4">
       <div class="flex items-center justify-between">
         <div>
           <h3 class="text-sm font-medium">SSH Key</h3>
-          <p class="text-xs text-muted-foreground mt-0.5">
-            {{ ssh?.has_key ? 'Key is configured.' : 'No SSH key configured.' }}
-          </p>
+          <p class="text-xs text-muted-foreground mt-0.5">Key is configured.</p>
         </div>
-        <Button @click="generateKey" :disabled="generating" variant="outline">
-          {{ generating ? 'Generating...' : ssh?.has_key ? 'Regenerate Key' : 'Generate Key' }}
+        <div v-if="confirmingRegenerate" class="flex items-center gap-2">
+          <span class="text-xs text-destructive">This will overwrite the existing key.</span>
+          <Button @click="handleRegenerateClick" :disabled="generating" variant="destructive" size="sm">
+            Confirm
+          </Button>
+          <Button @click="cancelRegenerate" variant="ghost" size="sm">
+            Cancel
+          </Button>
+        </div>
+        <Button v-else @click="handleRegenerateClick" :disabled="generating" variant="outline">
+          {{ generating ? 'Generating...' : 'Regenerate Key' }}
         </Button>
       </div>
 
@@ -117,7 +138,7 @@ function copyKey() {
             Copy
           </button>
         </div>
-        <p v-if="!isDocker" class="text-xs text-muted-foreground">
+        <p class="text-xs text-muted-foreground">
           Add this key to <code class="text-xs">~/.ssh/authorized_keys</code> on the Jodo VPS.
         </p>
       </div>

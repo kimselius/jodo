@@ -6,7 +6,8 @@ import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 
 const {
-  calls, total, loading, error,
+  calls, total, totalTokensIn, totalTokensOut, totalCost,
+  loading, error,
   load, loadMore, hasMore,
   selectedCall, detailLoading, toggleDetail,
 } = useLLMCalls()
@@ -88,9 +89,13 @@ function handleToggle(id: number) {
 
 <template>
   <div>
-    <!-- Header -->
+    <!-- Summary header -->
     <div class="flex items-center justify-between mb-3">
-      <p class="text-xs text-muted-foreground">{{ total }} calls recorded</p>
+      <div class="flex items-center gap-4 text-xs text-muted-foreground">
+        <span>{{ total }} calls</span>
+        <span>{{ fmtTokens(totalTokensIn) }} in / {{ fmtTokens(totalTokensOut) }} out</span>
+        <span>{{ fmtCost(totalCost) }}</span>
+      </div>
       <Button variant="ghost" size="sm" @click="load(true)">Refresh</Button>
     </div>
 

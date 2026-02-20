@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import Card from '@/components/ui/Card.vue'
 import Input from '@/components/ui/Input.vue'
 import Button from '@/components/ui/Button.vue'
@@ -22,6 +23,22 @@ const emit = defineEmits<{
   verifyDocker: []
   next: []
 }>()
+
+const confirmingRegenerate = ref(false)
+
+function handleGenerateClick() {
+  // If a key already exists, require confirmation
+  if (props.vps.publicKey && !confirmingRegenerate.value) {
+    confirmingRegenerate.value = true
+    return
+  }
+  confirmingRegenerate.value = false
+  emit('generate')
+}
+
+function cancelRegenerate() {
+  confirmingRegenerate.value = false
+}
 
 function copyPublicKey() {
   navigator.clipboard.writeText(props.vps.publicKey)
@@ -98,11 +115,16 @@ function copyPublicKey() {
           </p>
         </div>
 
-        <Button
-          @click="$emit('generate')"
-          :disabled="vps.generating"
-          variant="secondary"
-        >
+        <div v-if="confirmingRegenerate" class="flex items-center gap-2">
+          <span class="text-xs text-destructive">This will overwrite the existing key.</span>
+          <Button @click="handleGenerateClick" :disabled="vps.generating" variant="destructive" size="sm">
+            Confirm
+          </Button>
+          <Button @click="cancelRegenerate" variant="ghost" size="sm">
+            Cancel
+          </Button>
+        </div>
+        <Button v-else @click="handleGenerateClick" :disabled="vps.generating" variant="secondary">
           {{ vps.generating ? 'Generating...' : vps.publicKey ? 'Regenerate SSH Key' : 'Generate SSH Key' }}
         </Button>
 

@@ -84,13 +84,21 @@ func (s *Server) handleLLMCallsList(c *gin.Context) {
 	}
 
 	var total int
+	var totalTokensIn, totalTokensOut int
+	var totalCost float64
 	if intent != "" {
-		s.DB.QueryRow(`SELECT COUNT(*) FROM llm_calls WHERE intent = $1`, intent).Scan(&total)
+		s.DB.QueryRow(`SELECT COUNT(*), COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0), COALESCE(SUM(cost),0) FROM llm_calls WHERE intent = $1`, intent).Scan(&total, &totalTokensIn, &totalTokensOut, &totalCost)
 	} else {
-		s.DB.QueryRow(`SELECT COUNT(*) FROM llm_calls`).Scan(&total)
+		s.DB.QueryRow(`SELECT COUNT(*), COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0), COALESCE(SUM(cost),0) FROM llm_calls`).Scan(&total, &totalTokensIn, &totalTokensOut, &totalCost)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"calls": calls, "total": total})
+	c.JSON(http.StatusOK, gin.H{
+		"calls":           calls,
+		"total":           total,
+		"total_tokens_in":  totalTokensIn,
+		"total_tokens_out": totalTokensOut,
+		"total_cost":       totalCost,
+	})
 }
 
 // GET /api/llm-calls/:id

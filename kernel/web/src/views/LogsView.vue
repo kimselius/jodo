@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import LLMCallsTab from '@/components/logs/LLMCallsTab.vue'
 import EventsTab from '@/components/logs/EventsTab.vue'
 import InboxTab from '@/components/logs/InboxTab.vue'
+import { useBadges, clearBadge } from '@/composables/useBadges'
 
+const { badges } = useBadges()
 const activeTab = ref<'llm' | 'events' | 'inbox'>('llm')
+
+// Clear inbox badge when the Inbox tab is viewed
+watch(activeTab, (tab) => {
+  if (tab === 'inbox') clearBadge('/logs')
+}, { immediate: true })
 
 const tabs = [
   { key: 'llm' as const, label: 'LLM Calls' },
@@ -32,6 +39,12 @@ const tabs = [
           ]"
         >
           {{ tab.label }}
+          <span
+            v-if="tab.key === 'inbox' && badges['/logs'] > 0 && activeTab !== 'inbox'"
+            class="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-medium text-primary-foreground"
+          >
+            {{ badges['/logs'] > 99 ? '99+' : badges['/logs'] }}
+          </span>
         </button>
       </div>
 

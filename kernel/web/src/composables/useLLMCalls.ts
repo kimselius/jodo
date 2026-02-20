@@ -5,6 +5,9 @@ import type { LLMCallSummary, LLMCallDetail } from '@/types/llmcalls'
 export function useLLMCalls() {
   const calls = ref<LLMCallSummary[]>([])
   const total = ref(0)
+  const totalTokensIn = ref(0)
+  const totalTokensOut = ref(0)
+  const totalCost = ref(0)
   const loading = ref(true)
   const error = ref<string | null>(null)
   const offset = ref(0)
@@ -25,6 +28,9 @@ export function useLLMCalls() {
         calls.value = [...calls.value, ...data.calls]
       }
       total.value = data.total
+      totalTokensIn.value = data.total_tokens_in
+      totalTokensOut.value = data.total_tokens_out
+      totalCost.value = data.total_cost
       error.value = null
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load LLM calls'
@@ -70,7 +76,8 @@ export function useLLMCalls() {
   onMounted(() => load())
 
   return {
-    calls, total, loading, error, intentFilter,
+    calls, total, totalTokensIn, totalTokensOut, totalCost,
+    loading, error, intentFilter,
     load, loadMore, hasMore,
     selectedCall, detailLoading, loadDetail, toggleDetail, clearDetail,
   }

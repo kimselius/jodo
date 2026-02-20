@@ -669,11 +669,11 @@ def get_unread_chat_messages():
 
 
 def ack_chat_messages(up_to_id):
-    """Mark chat messages as read up to a given ID."""
+    """Mark human chat messages as read up to a given ID."""
     try:
         kernel_http.post(
             f"{KERNEL}/api/chat/ack",
-            json={"up_to_id": up_to_id},
+            json={"up_to_id": up_to_id, "source": "human"},
             timeout=10,
         )
     except Exception as e:

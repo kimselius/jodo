@@ -183,20 +183,32 @@ func (s *Server) handleChatGet(c *gin.Context) {
 }
 
 // handleChatAck marks messages as read up to a given ID.
-// POST /api/chat/ack  {"up_to_id": 42}
+// POST /api/chat/ack  {"up_to_id": 42, "source": "jodo"}
+// The source field filters which messages to ack: the human frontend acks
+// "jodo" messages (Jodo's replies), seed.py acks "human" messages.
 func (s *Server) handleChatAck(c *gin.Context) {
 	var req struct {
-		UpToID int `json:"up_to_id"`
+		UpToID int    `json:"up_to_id"`
+		Source string `json:"source"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.UpToID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "up_to_id required (positive integer)"})
 		return
 	}
 
-	result, err := s.DB.Exec(
-		`UPDATE chat_messages SET read_at = NOW() WHERE id <= $1 AND read_at IS NULL`,
-		req.UpToID,
-	)
+	var result sql.Result
+	var err error
+	if req.Source != "" {
+		result, err = s.DB.Exec(
+			`UPDATE chat_messages SET read_at = NOW() WHERE id <= $1 AND read_at IS NULL AND source = $2`,
+			req.UpToID, req.Source,
+		)
+	} else {
+		result, err = s.DB.Exec(
+			`UPDATE chat_messages SET read_at = NOW() WHERE id <= $1 AND read_at IS NULL`,
+			req.UpToID,
+		)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark as read"})
 		return
